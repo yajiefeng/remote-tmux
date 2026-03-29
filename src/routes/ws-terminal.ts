@@ -63,6 +63,9 @@ export function handleWsTerminal(
 
 	resetPingTimer()
 
+	// 输入聚合：攒字符，遇到回车记录完整命令
+	let inputBuffer = ""
+
 	// 处理客户端消息
 	ws.on("message", (raw: Buffer | string) => {
 		resetPingTimer()
@@ -86,7 +89,32 @@ export function handleWsTerminal(
 					return
 				}
 				manager.write(sessionId, msg.data)
-				audit?.log({ event: "session.input", sessionId, input: msg.data })
+
+				// 聚合输入：遇到回车/换行时记录完整命令
+				for (const ch of msg.data) {
+					if (ch === "\r" || ch === "\n") {
+						const line = inputBuffer.trim()
+						if (line.length > 0) {
+							audit?.log({ event: "session.input", sessionId, input: line })
+						}
+						inputBuffer = ""
+					} else if (ch === "\x7f" || ch === "\b") {
+						// 退格：删除最后一个字符
+						inputBuffer = inputBuffer.slice(0, -1)
+					} else if (ch === "\x03") {
+						// Ctrl-C：记录中断，清空缓冲
+						if (inputBuffer.length > 0) {
+							audit?.log({ event: "session.input", sessionId, input: inputBuffer + "^C" })
+						} else {
+							audit?.log({ event: "session.input", sessionId, input: "^C" })
+						}
+						inputBuffer = ""
+					} else if (ch >= " " || ch === "\t") {
+						// 可见字符和 tab
+						inputBuffer += ch
+					}
+					// 忽略其他控制字符（方向键 escape 序列等）
+				}
 				break
 			}
 

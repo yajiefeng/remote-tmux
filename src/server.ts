@@ -163,7 +163,7 @@ export async function startServer(config: Config): Promise<void> {
 			console.log(`Reattached ${count} existing tmux session(s)`)
 			// 通知 idleMonitor：reattach 的 session 初始无客户端
 			for (const info of manager.list()) {
-				idleMonitor.onClientChange(info.sessionId, info.connectedClients)
+				idleMonitor.onSessionCreated(info.sessionId)
 			}
 		}
 	} catch (err: unknown) {
@@ -279,6 +279,9 @@ function getClientHtml(): string {
     theme: { background: '#1e1e1e' },
     cursorBlink: true,
     allowProposedApi: true,
+    scrollback: 5000,
+    smoothScrollDuration: 100,
+    overviewRuler: { width: 0 },
   });
   const fitAddon = new window.FitAddon.FitAddon();
   term.loadAddon(fitAddon);
@@ -286,6 +289,39 @@ function getClientHtml(): string {
   term.loadAddon(unicode11Addon);
   term.unicode.activeVersion = '11';
   term.open(document.getElementById('terminal-container'));
+
+  // --- 移动端触摸滚动加速 ---
+  (function() {
+    var container = document.querySelector('#terminal-container .xterm-screen');
+    if (!container) return;
+    var SCROLL_MULTIPLIER = 6;
+    var lastTouchY = 0;
+    var scrolling = false;
+
+    container.addEventListener('touchstart', function(e) {
+      if (e.touches.length === 1) {
+        lastTouchY = e.touches[0].clientY;
+        scrolling = true;
+      }
+    }, { passive: true });
+
+    container.addEventListener('touchmove', function(e) {
+      if (!scrolling || e.touches.length !== 1) return;
+      var currentY = e.touches[0].clientY;
+      var delta = lastTouchY - currentY;
+      lastTouchY = currentY;
+
+      // 每 15px 滚一行，乘以加速系数
+      var lines = Math.round(delta / 15 * SCROLL_MULTIPLIER);
+      if (lines !== 0) {
+        term.scrollLines(lines);
+      }
+    }, { passive: true });
+
+    container.addEventListener('touchend', function() {
+      scrolling = false;
+    }, { passive: true });
+  })();
 
   // Wait for web font to load before fitting, otherwise xterm measures with wrong font
   document.fonts.ready.then(function() {
@@ -385,32 +421,22 @@ function getClientHtml(): string {
   });
 
   async function ensureSession() {
-    // Validate existing session still exists on server
-    if (currentSid) {
-      try {
-        var res = await fetch('/api/sessions/' + currentSid, { headers: { 'Authorization': 'Bearer ' + TOKEN } });
-        if (res.ok) return currentSid;
-      } catch {}
-      // Session gone, clear it
-      currentSid = null;
-    }
-    if (SESSION_ID) {
-      try {
-        var res2 = await fetch('/api/sessions/' + SESSION_ID, { headers: { 'Authorization': 'Bearer ' + TOKEN } });
-        if (res2.ok) { currentSid = SESSION_ID; return SESSION_ID; }
-      } catch {}
-    }
+    // 已有 sid 且通过 WS 验证过，直接返回（重连场景）
+    if (currentSid) return currentSid;
 
-    // List existing sessions
-    const data = await apiGet('/api/sessions');
+    // URL 指定了 session
+    if (SESSION_ID) { currentSid = SESSION_ID; return SESSION_ID; }
+
+    // 一次请求：列出已有 session
+    var data = await apiGet('/api/sessions');
     if (data.items && data.items.length > 0) {
       currentSid = data.items[0].sessionId;
       sessionName.textContent = data.items[0].name || currentSid.substring(0, 8);
       return currentSid;
     }
 
-    // Create new
-    const created = await apiPost('/api/sessions', { name: 'default' });
+    // 没有就创建
+    var created = await apiPost('/api/sessions', { name: 'default' });
     currentSid = created.sessionId;
     sessionName.textContent = created.name || currentSid.substring(0, 8);
     return currentSid;

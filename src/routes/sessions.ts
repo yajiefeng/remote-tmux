@@ -62,7 +62,7 @@ export async function handleSessionsRoute(
 			}
 			const info = await manager.create(body)
 			audit?.log({ event: "session.created", sessionId: info.sessionId, ip: clientIp, detail: body.name })
-			idleMonitor?.onClientChange(info.sessionId, 0)
+			idleMonitor?.onSessionCreated(info.sessionId)
 			json(res, 201, info)
 		} catch (e) {
 			const message = e instanceof Error ? e.message : "Unknown error"
@@ -150,7 +150,7 @@ export async function handleSessionsRoute(
 				json(res, 404, { code: "SESSION_NOT_FOUND", message: "Session not found" })
 				return
 			}
-			audit?.log({ event: "session.input", sessionId, ip: clientIp, input: body.data })
+			audit?.log({ event: "session.input", sessionId, ip: clientIp, input: body.data.replace(/[\r\n]+$/, "") })
 			json(res, 200, { ok: true })
 		} catch (e) {
 			const message = e instanceof Error ? e.message : "Unknown error"

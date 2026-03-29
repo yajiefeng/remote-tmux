@@ -4,6 +4,10 @@ Control Mac terminal sessions from your phone browser. Shell runs inside tmux �
 
 [中文文档](README_cn.md)
 
+<p align="center">
+  <img src="assets/images/remote-tmux.jpeg" width="300" alt="remote-tmux screenshot" />
+</p>
+
 ## Features
 
 - **tmux Persistence** — Shell processes run inside tmux. Server restarts auto-reattach existing sessions without losing terminal content

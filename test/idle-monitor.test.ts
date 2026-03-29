@@ -101,4 +101,31 @@ describe("IdleMonitor", () => {
 		expect(onIdle).toHaveBeenCalledTimes(1)
 		monitor.dispose()
 	})
+
+	it("onSessionCreated uses grace period (min 30s)", () => {
+		const onIdle = vi.fn()
+		// timeout is 5s, but grace period should be at least 30s
+		const monitor = new IdleMonitor(5000, onIdle)
+
+		monitor.onSessionCreated("s1")
+		vi.advanceTimersByTime(5000)
+		expect(onIdle).not.toHaveBeenCalled() // not yet — grace period
+
+		vi.advanceTimersByTime(25000) // total 30s
+		expect(onIdle).toHaveBeenCalledWith("s1")
+		monitor.dispose()
+	})
+
+	it("onSessionCreated grace period cancelled by client connect", () => {
+		const onIdle = vi.fn()
+		const monitor = new IdleMonitor(5000, onIdle)
+
+		monitor.onSessionCreated("s1")
+		vi.advanceTimersByTime(2000)
+		monitor.onClientChange("s1", 1) // client connects — cancels grace timer
+		vi.advanceTimersByTime(60000)
+
+		expect(onIdle).not.toHaveBeenCalled()
+		monitor.dispose()
+	})
 })

@@ -3,14 +3,19 @@
 // 当 session 没有任何 WS 客户端连接超过指定时间后触发回调
 // ============================================================
 
+/** 新 session 创建后的最小宽限期（ms），让客户端有时间连上 */
+const MIN_GRACE_PERIOD_MS = 30000
+
 export class IdleMonitor {
 	private timers: Map<string, ReturnType<typeof setTimeout>> = new Map()
 	private timeoutMs: number
+	private graceMs: number
 	private onIdle: (sessionId: string) => void
 	private enabled: boolean
 
 	constructor(timeoutMs: number, onIdle: (sessionId: string) => void) {
 		this.timeoutMs = timeoutMs
+		this.graceMs = Math.max(timeoutMs, MIN_GRACE_PERIOD_MS)
 		this.onIdle = onIdle
 		this.enabled = timeoutMs > 0
 	}
@@ -34,6 +39,18 @@ export class IdleMonitor {
 			this.timers.delete(sessionId)
 			this.onIdle(sessionId)
 		}, this.timeoutMs)
+
+		this.timers.set(sessionId, timer)
+	}
+
+	/** session 刚创建时调用，使用较长的宽限期 */
+	onSessionCreated(sessionId: string): void {
+		if (!this.enabled) return
+
+		const timer = setTimeout(() => {
+			this.timers.delete(sessionId)
+			this.onIdle(sessionId)
+		}, this.graceMs)
 
 		this.timers.set(sessionId, timer)
 	}

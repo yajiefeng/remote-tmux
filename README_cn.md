@@ -4,6 +4,10 @@
 
 [English](README.md)
 
+<p align="center">
+  <img src="assets/images/remote-tmux.jpeg" width="300" alt="remote-tmux 截图" />
+</p>
+
 ## 特点
 
 - **tmux 持久化** — shell 进程跑在 tmux 里，server 重启后自动 reattach，终端内容不丢失
