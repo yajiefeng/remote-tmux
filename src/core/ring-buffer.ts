@@ -2,7 +2,7 @@
 // ring-buffer.ts — 输出历史环形缓冲区
 // ============================================================
 
-import type { OutputChunk } from "./types.js"
+import type { OutputChunk } from "../types.js"
 
 export class RingBuffer {
 	private chunks: OutputChunk[]

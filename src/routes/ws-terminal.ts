@@ -33,21 +33,22 @@ export function handleWsTerminal(
 		ws.close()
 		return
 	}
+	const activeSession = session
 
 	// 注册客户端
 	manager.addClient(sessionId, ws)
-	idleMonitor?.onClientChange(sessionId, session.clients.size)
+	idleMonitor?.onClientChange(sessionId, activeSession.clients.size)
 
 	// 发送 ready
 	send(ws, {
 		type: "ready",
-		sessionId: session.sessionId,
-		cols: session.cols,
-		rows: session.rows,
+		sessionId: activeSession.sessionId,
+		cols: activeSession.cols,
+		rows: activeSession.rows,
 	})
 
 	console.log(
-		`[ws ${sessionId}] Client connected (total: ${session.clients.size})`,
+		`[ws ${sessionId}] Client connected (total: ${activeSession.clients.size})`,
 	)
 
 	// 心跳超时检测
@@ -146,14 +147,14 @@ export function handleWsTerminal(
 			pingTimer = null
 		}
 		manager.removeClient(sessionId, ws)
-		idleMonitor?.onClientChange(sessionId, session.clients.size)
+		idleMonitor?.onClientChange(sessionId, activeSession.clients.size)
 	}
 
 	// 连接关闭
 	ws.on("close", () => {
 		cleanup()
 		console.log(
-			`[ws ${sessionId}] Client disconnected (remaining: ${session.clients.size})`,
+			`[ws ${sessionId}] Client disconnected (remaining: ${activeSession.clients.size})`,
 		)
 	})
 
