@@ -16,23 +16,29 @@ async function readBody<T>(req: IncomingMessage): Promise<T> {
 	return new Promise((resolve, reject) => {
 		const chunks: Buffer[] = []
 		let size = 0
+		let tooLarge = false
 		req.on("data", (chunk: Buffer) => {
+			if (tooLarge) return
 			size += chunk.length
 			if (size > MAX_BODY_BYTES) {
-				req.destroy()
+				tooLarge = true
+				req.resume() // drain remaining data
 				reject(new BodyTooLargeError())
 				return
 			}
 			chunks.push(chunk)
 		})
 		req.on("end", () => {
+			if (tooLarge) return
 			try {
 				resolve(JSON.parse(Buffer.concat(chunks).toString()) as T)
 			} catch {
 				reject(new InvalidJsonError())
 			}
 		})
-		req.on("error", reject)
+		req.on("error", (err) => {
+			if (!tooLarge) reject(err)
+		})
 	})
 }
 

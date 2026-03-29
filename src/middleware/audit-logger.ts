@@ -2,7 +2,9 @@
 // audit-logger.ts — 审计日志，JSONL 格式追加写入
 // ============================================================
 
+import { mkdirSync } from "node:fs"
 import { createWriteStream, type WriteStream } from "node:fs"
+import { dirname } from "node:path"
 
 export interface AuditEvent {
 	/** 事件类型 */
@@ -30,12 +32,23 @@ export class AuditLogger {
 	constructor(filePath: string) {
 		this.enabled = filePath.length > 0
 		if (this.enabled) {
-			this.stream = createWriteStream(filePath, { flags: "a" })
+			try {
+				mkdirSync(dirname(filePath), { recursive: true })
+				this.stream = createWriteStream(filePath, { flags: "a" })
+				this.stream.on("error", (err) => {
+					console.error(`[audit] Write stream error: ${err.message}. Disabling audit log.`)
+					this.stream = null
+					this.enabled = false
+				})
+			} catch (err) {
+				console.error(`[audit] Failed to open ${filePath}: ${err instanceof Error ? err.message : err}. Disabling audit log.`)
+				this.enabled = false
+			}
 		}
 	}
 
 	/** 记录一条审计事件 */
-	async log(input: AuditInput): Promise<void> {
+	log(input: AuditInput): void {
 		if (!this.enabled || !this.stream) return
 
 		const entry: AuditEvent = {
@@ -49,21 +62,18 @@ export class AuditLogger {
 		}
 
 		const line = JSON.stringify(entry) + "\n"
-
-		return new Promise<void>((resolve, reject) => {
-			this.stream!.write(line, (err) => {
-				if (err) reject(err)
-				else resolve()
-			})
-		})
+		this.stream.write(line)
 	}
 
 	/** 强制刷盘 */
 	async flush(): Promise<void> {
 		if (!this.stream) return
-		if (this.stream.writableLength === 0) return
-		return new Promise<void>((resolve) => {
-			this.stream!.once("drain", resolve)
+		// Write an empty string with callback to ensure all prior writes are flushed
+		return new Promise<void>((resolve, reject) => {
+			this.stream!.write("", (err) => {
+				if (err) reject(err)
+				else resolve()
+			})
 		})
 	}
 

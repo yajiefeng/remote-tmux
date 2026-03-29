@@ -6,7 +6,8 @@ describe("AuditLogger", () => {
 	const logPath = "/tmp/webshell-audit-test.jsonl"
 	let logger: AuditLogger
 
-	beforeEach(() => {
+	beforeEach(async () => {
+		try { await unlink(logPath) } catch {}
 		logger = new AuditLogger(logPath)
 	})
 
@@ -16,7 +17,7 @@ describe("AuditLogger", () => {
 	})
 
 	it("writes a single event as JSONL", async () => {
-		await logger.log({
+		logger.log({
 			event: "session.created",
 			sessionId: "abc-123",
 			ip: "127.0.0.1",
@@ -35,9 +36,9 @@ describe("AuditLogger", () => {
 	})
 
 	it("writes multiple events in order", async () => {
-		await logger.log({ event: "auth.success", ip: "1.2.3.4" })
-		await logger.log({ event: "session.created", sessionId: "s1" })
-		await logger.log({ event: "session.destroyed", sessionId: "s1" })
+		logger.log({ event: "auth.success", ip: "1.2.3.4" })
+		logger.log({ event: "session.created", sessionId: "s1" })
+		logger.log({ event: "session.destroyed", sessionId: "s1" })
 		await logger.flush()
 
 		const content = await readFile(logPath, "utf-8")
@@ -50,7 +51,7 @@ describe("AuditLogger", () => {
 
 	it("records timestamp automatically", async () => {
 		const before = Date.now()
-		await logger.log({ event: "auth.failure", ip: "10.0.0.1" })
+		logger.log({ event: "auth.failure", ip: "10.0.0.1" })
 		await logger.flush()
 		const after = Date.now()
 
@@ -63,7 +64,7 @@ describe("AuditLogger", () => {
 
 	it("truncates input data to maxInputPreview chars", async () => {
 		const longInput = "a".repeat(500)
-		await logger.log({
+		logger.log({
 			event: "session.input",
 			sessionId: "s1",
 			input: longInput,
@@ -77,7 +78,7 @@ describe("AuditLogger", () => {
 	})
 
 	it("does not truncate short input", async () => {
-		await logger.log({
+		logger.log({
 			event: "session.input",
 			sessionId: "s1",
 			input: "ls -la",
@@ -90,13 +91,13 @@ describe("AuditLogger", () => {
 	})
 
 	it("appends to existing file", async () => {
-		await logger.log({ event: "auth.success", ip: "1.1.1.1" })
+		logger.log({ event: "auth.success", ip: "1.1.1.1" })
 		await logger.flush()
 		await logger.close()
 
 		// Reopen same file
 		const logger2 = new AuditLogger(logPath)
-		await logger2.log({ event: "auth.success", ip: "2.2.2.2" })
+		logger2.log({ event: "auth.success", ip: "2.2.2.2" })
 		await logger2.flush()
 		await logger2.close()
 
@@ -108,8 +109,15 @@ describe("AuditLogger", () => {
 	it("handles disabled logger (empty path) gracefully", async () => {
 		const disabled = new AuditLogger("")
 		// Should not throw
-		await disabled.log({ event: "auth.success", ip: "1.1.1.1" })
+		disabled.log({ event: "auth.success", ip: "1.1.1.1" })
 		await disabled.flush()
 		await disabled.close()
+	})
+
+	it("handles invalid path gracefully without crashing", () => {
+		// Should not throw — degrades to disabled
+		const bad = new AuditLogger("/nonexistent/deep/path/audit.log")
+		bad.log({ event: "test" })
+		// No crash = pass
 	})
 })

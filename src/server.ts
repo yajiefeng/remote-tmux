@@ -456,7 +456,7 @@ function getClientHtml(): string {
     lastSeq = 0;
 
     try {
-      const url = '/api/sessions/' + sid + '/history?after=' + lastSeq + '&limit=5000';
+      const url = '/api/sessions/' + sid + '/history?after=' + lastSeq + '&limit=1000';
       const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + TOKEN } });
       const h = await res.json();
       if (h.chunks && h.chunks.length > 0) {
