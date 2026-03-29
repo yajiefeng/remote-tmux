@@ -106,6 +106,7 @@ export const ErrorCodes = {
 	INPUT_TOO_LONG: { status: 400, code: "INPUT_TOO_LONG" },
 	INVALID_MESSAGE: { status: 400, code: "INVALID_MESSAGE" },
 	RATE_LIMITED: { status: 429, code: "RATE_LIMITED" },
+	BODY_TOO_LARGE: { status: 413, code: "BODY_TOO_LARGE" },
 	PTY_SPAWN_FAILED: { status: 500, code: "PTY_SPAWN_FAILED" },
 	TMUX_ERROR: { status: 500, code: "TMUX_ERROR" },
 } as const
