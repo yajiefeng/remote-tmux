@@ -74,9 +74,7 @@ export async function startServer(config: Config): Promise<void> {
 		}
 
 		// 频率限制（API 路由）
-		const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim()
-			?? req.socket.remoteAddress
-			?? "unknown"
+		const clientIp = req.socket.remoteAddress ?? "unknown"
 		if (!rateLimiter.check(clientIp)) {
 			res.writeHead(429, { "Content-Type": "application/json" })
 			res.end(JSON.stringify({ code: "RATE_LIMITED", message: "Too many requests" }))
@@ -112,11 +110,18 @@ export async function startServer(config: Config): Promise<void> {
 			return
 		}
 
+		// 频率限制
+		const upgradeIp = req.socket.remoteAddress ?? "unknown"
+		if (!rateLimiter.check(upgradeIp)) {
+			socket.write("HTTP/1.1 429 Too Many Requests\r\n\r\n")
+			socket.destroy()
+			return
+		}
+
 		// 鉴权
 		const token = extractToken(req)
 		if (!verifyToken(token, config)) {
-			const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim()
-				?? req.socket.remoteAddress ?? "unknown"
+			const ip = req.socket.remoteAddress ?? "unknown"
 			audit.log({ event: "auth.failure", ip, detail: "ws upgrade" })
 			socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n")
 			socket.destroy()
@@ -131,8 +136,7 @@ export async function startServer(config: Config): Promise<void> {
 		}
 
 		wss.handleUpgrade(req, socket, head, (ws) => {
-			const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim()
-				?? req.socket.remoteAddress ?? "unknown"
+			const ip = req.socket.remoteAddress ?? "unknown"
 			audit.log({ event: "ws.connected", sessionId: sessionId!, ip })
 			handleWsTerminal(ws, sessionId!, manager, config, audit, idleMonitor)
 		})

@@ -61,9 +61,9 @@ export class AuditLogger {
 	/** 强制刷盘 */
 	async flush(): Promise<void> {
 		if (!this.stream) return
-		return new Promise<void>((resolve, reject) => {
+		if (this.stream.writableLength === 0) return
+		return new Promise<void>((resolve) => {
 			this.stream!.once("drain", resolve)
-			if (this.stream!.writableLength === 0) resolve()
 		})
 	}
 

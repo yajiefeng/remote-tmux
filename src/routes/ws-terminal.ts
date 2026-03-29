@@ -89,7 +89,12 @@ export function handleWsTerminal(
 					sendError(ws, "INPUT_TOO_LONG", `Max ${config.maxInputBytes} bytes`)
 					return
 				}
-				manager.write(sessionId, msg.data)
+				const writeOk = manager.write(sessionId, msg.data)
+				if (!writeOk) {
+					sendError(ws, "SESSION_NOT_FOUND", "Session has been destroyed")
+					ws.close()
+					return
+				}
 
 				// 聚合输入：遇到回车/换行时记录完整命令
 				for (const ch of msg.data) {
@@ -126,7 +131,12 @@ export function handleWsTerminal(
 					sendError(ws, "INVALID_MESSAGE", "Invalid cols/rows")
 					return
 				}
-				manager.resize(sessionId, cols, rows)
+				const resizeOk = manager.resize(sessionId, cols, rows)
+				if (!resizeOk) {
+					sendError(ws, "SESSION_NOT_FOUND", "Session has been destroyed")
+					ws.close()
+					return
+				}
 				break
 			}
 

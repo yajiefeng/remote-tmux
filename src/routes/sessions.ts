@@ -9,20 +9,39 @@ import type { IdleMonitor } from "../core/idle-monitor.js"
 import type { AuditLogger } from "../middleware/audit-logger.js"
 import type { CreateSessionRequest } from "../types.js"
 
-/** 读取请求 body（JSON） */
+const MAX_BODY_BYTES = 65536 // 64KB
+
+/** 读取请求 body（JSON），限制大小 */
 async function readBody<T>(req: IncomingMessage): Promise<T> {
 	return new Promise((resolve, reject) => {
 		const chunks: Buffer[] = []
-		req.on("data", (chunk: Buffer) => chunks.push(chunk))
+		let size = 0
+		req.on("data", (chunk: Buffer) => {
+			size += chunk.length
+			if (size > MAX_BODY_BYTES) {
+				req.destroy()
+				reject(new BodyTooLargeError())
+				return
+			}
+			chunks.push(chunk)
+		})
 		req.on("end", () => {
 			try {
 				resolve(JSON.parse(Buffer.concat(chunks).toString()) as T)
-			} catch (e) {
-				reject(new Error("Invalid JSON body"))
+			} catch {
+				reject(new InvalidJsonError())
 			}
 		})
 		req.on("error", reject)
 	})
+}
+
+class InvalidJsonError extends Error {
+	constructor() { super("Invalid JSON body") }
+}
+
+class BodyTooLargeError extends Error {
+	constructor() { super(`Body exceeds ${MAX_BODY_BYTES} bytes`) }
 }
 
 /** 发送 JSON 响应 */
@@ -49,8 +68,7 @@ export async function handleSessionsRoute(
 	const url = new URL(req.url ?? "", `http://${req.headers.host ?? "localhost"}`)
 	const pathname = url.pathname
 	const method = req.method ?? "GET"
-	const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim()
-		?? req.socket.remoteAddress ?? "unknown"
+	const clientIp = req.socket.remoteAddress ?? "unknown"
 
 	// POST /api/sessions — 创建会话
 	if (method === "POST" && pathname === "/api/sessions") {
@@ -65,8 +83,14 @@ export async function handleSessionsRoute(
 			idleMonitor?.onSessionCreated(info.sessionId)
 			json(res, 201, info)
 		} catch (e) {
-			const message = e instanceof Error ? e.message : "Unknown error"
-			json(res, 500, { code: "PTY_SPAWN_FAILED", message })
+			if (e instanceof InvalidJsonError) {
+				json(res, 400, { code: "INVALID_MESSAGE", message: e.message })
+			} else if (e instanceof BodyTooLargeError) {
+				json(res, 413, { code: "BODY_TOO_LARGE", message: e.message })
+			} else {
+				const message = e instanceof Error ? e.message : "Unknown error"
+				json(res, 500, { code: "TMUX_ERROR", message })
+			}
 		}
 		return
 	}
@@ -153,8 +177,14 @@ export async function handleSessionsRoute(
 			audit?.log({ event: "session.input", sessionId, ip: clientIp, input: body.data.replace(/[\r\n]+$/, "") })
 			json(res, 200, { ok: true })
 		} catch (e) {
-			const message = e instanceof Error ? e.message : "Unknown error"
-			json(res, 500, { code: "TMUX_ERROR", message })
+			if (e instanceof InvalidJsonError) {
+				json(res, 400, { code: "INVALID_MESSAGE", message: e.message })
+			} else if (e instanceof BodyTooLargeError) {
+				json(res, 413, { code: "BODY_TOO_LARGE", message: e.message })
+			} else {
+				const message = e instanceof Error ? e.message : "Unknown error"
+				json(res, 500, { code: "TMUX_ERROR", message })
+			}
 		}
 		return
 	}
