@@ -1,0 +1,35 @@
+{
+	"name": "remote-tmux",
+	"version": "0.1.0",
+	"description": "Remote terminal via tmux - control Mac terminal sessions from your phone browser",
+	"type": "module",
+	"main": "./dist/server.js",
+	"types": "./dist/server.d.ts",
+	"bin": {
+		"remote-tmux": "./dist/cli.js"
+	},
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsc -p tsconfig.build.json && shx chmod +x dist/cli.js",
+		"dev": "tsx --watch src/cli.ts",
+		"start": "node dist/cli.js",
+		"test": "vitest --run"
+	},
+	"dependencies": {
+		"ws": "^8.18.0",
+		"uuid": "^11.1.0"
+	},
+	"devDependencies": {
+		"@types/node": "^24.3.0",
+		"@types/ws": "^8.18.1",
+		"@types/uuid": "^10.0.0",
+		"typescript": "^5.7.3",
+		"vitest": "^3.2.4",
+		"tsx": "^4.19.4",
+		"shx": "^0.3.4"
+	},
+	"engines": {
+		"node": ">=20.0.0"
+	},
+	"license": "MIT"
+}
