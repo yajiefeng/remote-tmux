@@ -85,10 +85,6 @@ export function handleWsTerminal(
 					sendError(ws, "INVALID_MESSAGE", "data must be a string")
 					return
 				}
-				// Temporary debug: log escape sequences
-				if (msg.data.includes("\x1b")) {
-					console.log(`[ws ${sessionId}] input escape hex: ${Buffer.from(msg.data).toString("hex")}`)
-				}
 				if (Buffer.byteLength(msg.data) > config.maxInputBytes) {
 					sendError(ws, "INPUT_TOO_LONG", `Max ${config.maxInputBytes} bytes`)
 					return

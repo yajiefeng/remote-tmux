@@ -604,12 +604,11 @@ function getClientHtml(): string {
 
   // --- Input + Mobile IME fix ---
 
-  // Shift+Enter: send LF (0x0a) constructed at runtime
-  // pi editor recognizes single LF as newline insertion
-  var SHIFT_ENTER = String.fromCharCode(10);
+  // Shift+Enter: send ESC[13;2~ (recognized by pi editor as newline)
+  // pi editor hardcodes: data === ESC + "[13;2~"
+  var SHIFT_ENTER = String.fromCharCode(27) + '[13;2~';
   term.attachCustomKeyEventHandler(function(e) {
     if (e.type === 'keydown' && e.key === 'Enter' && e.shiftKey) {
-      console.log('[remote-tmux] Shift+Enter intercepted');
       if (ws && ws.readyState === 1) {
         ws.send(JSON.stringify({ type: 'input', data: SHIFT_ENTER }));
       }
