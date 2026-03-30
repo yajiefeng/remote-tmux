@@ -190,16 +190,14 @@ export class SessionManager {
 
 		const flush = (): void => {
 			flushTimer = null
-			if (session.muted) {
-				// Discard output during resize redraw
-				pending = ""
-				return
-			}
 			if (pending.length > 0) {
 				const data = pending
 				pending = ""
 				const seq = session.buffer.append(data)
-				this.broadcast(session, { type: "output", data, seq })
+				// During mute (resize redraw), save to buffer but skip broadcast
+				if (!session.muted) {
+					this.broadcast(session, { type: "output", data, seq })
+				}
 			}
 		}
 

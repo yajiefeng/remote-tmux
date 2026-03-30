@@ -261,4 +261,35 @@ describe("SessionManager resize (smallest-wins)", () => {
 		await new Promise((r) => setTimeout(r, 200))
 		expect(session.muted).toBe(false)
 	})
+
+	it("mute suppresses broadcast but still saves to buffer", async () => {
+		const ws1 = mockWs()
+		manager.addClient(sessionId, ws1, 120, 36)
+
+		const session = manager.get(sessionId)!
+
+		// Trigger resize to mute
+		manager.resize(sessionId, 80, 24, ws1)
+		expect(session.muted).toBe(true)
+
+		// Simulate output arriving during mute by pushing to tail stdout
+		const tail = session.tailProcess as any
+		tail.stdout.push(Buffer.from("data-during-mute"))
+
+		// Wait for flush timer (16ms) + margin
+		await new Promise((r) => setTimeout(r, 50))
+
+		// Buffer should contain the data
+		const history = session.buffer.getAfter(0)
+		const hasData = history.some((c: any) => c.data.includes("data-during-mute"))
+		expect(hasData).toBe(true)
+
+		// But client should NOT have received a broadcast
+		const outputCalls = ws1.send.mock.calls.filter(
+			(call: any[]) => {
+				try { return JSON.parse(call[0]).type === "output" } catch { return false }
+			}
+		)
+		expect(outputCalls).toHaveLength(0)
+	})
 })
