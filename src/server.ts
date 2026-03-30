@@ -315,23 +315,32 @@ function getClientHtml(): string {
     var container = document.querySelector('#terminal-container .xterm-screen');
     if (!container) return;
     var SCROLL_MULTIPLIER = 6;
+    var DEAD_ZONE = 8; // px — ignore movement smaller than this (tap tolerance)
+    var startY = 0;
     var lastTouchY = 0;
     var scrolling = false;
+    var didScroll = false;
 
     container.addEventListener('touchstart', function(e) {
       if (e.touches.length === 1) {
-        lastTouchY = e.touches[0].clientY;
+        startY = e.touches[0].clientY;
+        lastTouchY = startY;
         scrolling = true;
+        didScroll = false;
       }
     }, { passive: true });
 
     container.addEventListener('touchmove', function(e) {
       if (!scrolling || e.touches.length !== 1) return;
       var currentY = e.touches[0].clientY;
+
+      // Don't start scrolling until finger moves past dead zone
+      if (!didScroll && Math.abs(currentY - startY) < DEAD_ZONE) return;
+      didScroll = true;
+
       var delta = lastTouchY - currentY;
       lastTouchY = currentY;
 
-      // 每 15px 滚一行，乘以加速系数
       var lines = Math.round(delta / 15 * SCROLL_MULTIPLIER);
       if (lines !== 0) {
         term.scrollLines(lines);
