@@ -577,32 +577,29 @@ function getClientHtml(): string {
     setTimeout(function() { clearInterval(countdown); connect(); }, delay);
   }
 
+  // --- Input ---
+  var lastSentData = '';
+  term.onData(function(data) {
+    lastSentData = data;
+    if (ws && ws.readyState === 1) {
+      ws.send(JSON.stringify({ type: 'input', data: data }));
+    }
+  });
+
   // --- Mobile IME fix: xterm.js may swallow CJK punctuation on mobile ---
   (function() {
     var xtermTextarea = document.querySelector('#terminal-container .xterm-helper-textarea');
     if (!xtermTextarea) return;
-
-    // Track what onData already sent
-    var lastSentData = '';
-    term.onData(function(data) {
-      lastSentData = data;
-      if (ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: 'input', data: data }));
-      }
-    });
 
     // Fallback: catch input events that xterm missed
     xtermTextarea.addEventListener('input', function(e) {
       var data = e.data;
       if (!data) return;
       // Only intervene for non-ASCII characters (CJK, punctuation, etc.)
-      // that xterm.js may have dropped
       if (/^[\x00-\x7f]+$/.test(data)) return;
       // Give xterm.js a tick to process via onData
       setTimeout(function() {
-        // If onData already handled it, skip
         if (lastSentData === data) return;
-        // xterm missed it — send manually
         if (ws && ws.readyState === 1) {
           ws.send(JSON.stringify({ type: 'input', data: data }));
         }
