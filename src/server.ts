@@ -603,6 +603,17 @@ function getClientHtml(): string {
   }
 
   // --- Input + Mobile IME fix ---
+
+  // Shift+Enter → newline instead of carriage return
+  term.attachCustomKeyEventHandler(function(e) {
+    if (e.type === 'keydown' && e.key === 'Enter' && e.shiftKey) {
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 'input', data: '\n' }));
+      }
+      return false; // prevent xterm default (which sends \r)
+    }
+    return true;
+  });
   // xterm.js on mobile may swallow CJK punctuation that doesn't go through
   // composition. We use a pending-queue with bidirectional matching to handle
   // both event orderings (input-before-onData and onData-before-input).
