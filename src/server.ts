@@ -577,39 +577,36 @@ function getClientHtml(): string {
     setTimeout(function() { clearInterval(countdown); connect(); }, delay);
   }
 
-  // --- Input ---
-  term.onData(function(data) {
-    if (ws && ws.readyState === 1) {
-      ws.send(JSON.stringify({ type: 'input', data: data }));
-    }
-  });
-
-  // --- Mobile IME fix: xterm.js may swallow punctuation from composition ---
+  // --- Mobile IME fix: xterm.js may swallow CJK punctuation on mobile ---
   (function() {
     var xtermTextarea = document.querySelector('#terminal-container .xterm-helper-textarea');
     if (!xtermTextarea) return;
-    var lastCompositionData = '';
 
-    xtermTextarea.addEventListener('compositionstart', function() {
-      lastCompositionData = '';
+    // Track what onData already sent
+    var lastSentData = '';
+    term.onData(function(data) {
+      lastSentData = data;
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 'input', data: data }));
+      }
     });
 
-    xtermTextarea.addEventListener('compositionupdate', function(e) {
-      lastCompositionData = e.data || '';
-    });
-
-    xtermTextarea.addEventListener('compositionend', function(e) {
-      var data = e.data || '';
-      // xterm.js onData normally fires for compositionend,
-      // but on mobile it sometimes misses Chinese punctuation.
-      // We detect this by checking if the composed text looks like
-      // punctuation-only that xterm might drop.
-      if (data && /^[\u3000-\u303f\uff00-\uffef\u2000-\u206f\u2e00-\u2e7f]+$/.test(data)) {
-        // Punctuation-only composition result — force send
+    // Fallback: catch input events that xterm missed
+    xtermTextarea.addEventListener('input', function(e) {
+      var data = e.data;
+      if (!data) return;
+      // Only intervene for non-ASCII characters (CJK, punctuation, etc.)
+      // that xterm.js may have dropped
+      if (/^[\x00-\x7f]+$/.test(data)) return;
+      // Give xterm.js a tick to process via onData
+      setTimeout(function() {
+        // If onData already handled it, skip
+        if (lastSentData === data) return;
+        // xterm missed it — send manually
         if (ws && ws.readyState === 1) {
           ws.send(JSON.stringify({ type: 'input', data: data }));
         }
-      }
+      }, 50);
     });
   })();
 
