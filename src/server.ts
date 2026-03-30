@@ -447,18 +447,24 @@ function getClientHtml(): string {
   }
 
   // --- History fetch + dedup ---
+  var lastLoadedSid = null;
+
   async function loadHistory(sid) {
     historyLoaded = false;
     pendingOutputs = [];
 
-    // Clear terminal and reset seq before replaying history
-    term.reset();
-    lastSeq = 0;
+    // Only reset terminal when switching to a different session
+    var isNewSession = (sid !== lastLoadedSid);
+    if (isNewSession) {
+      term.reset();
+      lastSeq = 0;
+      lastLoadedSid = sid;
+    }
 
     try {
-      const url = '/api/sessions/' + sid + '/history?after=' + lastSeq + '&limit=1000';
-      const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + TOKEN } });
-      const h = await res.json();
+      var url = '/api/sessions/' + sid + '/history?after=' + lastSeq + '&limit=1000';
+      var res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + TOKEN } });
+      var h = await res.json();
       if (h.chunks && h.chunks.length > 0) {
         h.chunks.forEach(function(c) {
           if (c.seq > lastSeq) {
@@ -480,6 +486,9 @@ function getClientHtml(): string {
       }
     });
     pendingOutputs = [];
+
+    // Always scroll to bottom after history replay
+    term.scrollToBottom();
   }
 
   // --- WebSocket ---
