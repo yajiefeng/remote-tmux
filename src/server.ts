@@ -584,6 +584,35 @@ function getClientHtml(): string {
     }
   });
 
+  // --- Mobile IME fix: xterm.js may swallow punctuation from composition ---
+  (function() {
+    var xtermTextarea = document.querySelector('#terminal-container .xterm-helper-textarea');
+    if (!xtermTextarea) return;
+    var lastCompositionData = '';
+
+    xtermTextarea.addEventListener('compositionstart', function() {
+      lastCompositionData = '';
+    });
+
+    xtermTextarea.addEventListener('compositionupdate', function(e) {
+      lastCompositionData = e.data || '';
+    });
+
+    xtermTextarea.addEventListener('compositionend', function(e) {
+      var data = e.data || '';
+      // xterm.js onData normally fires for compositionend,
+      // but on mobile it sometimes misses Chinese punctuation.
+      // We detect this by checking if the composed text looks like
+      // punctuation-only that xterm might drop.
+      if (data && /^[\u3000-\u303f\uff00-\uffef\u2000-\u206f\u2e00-\u2e7f]+$/.test(data)) {
+        // Punctuation-only composition result — force send
+        if (ws && ws.readyState === 1) {
+          ws.send(JSON.stringify({ type: 'input', data: data }));
+        }
+      }
+    });
+  })();
+
   // --- Resize ---
   function handleResize() {
     fitAddon.fit();
