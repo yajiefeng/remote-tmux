@@ -212,4 +212,53 @@ describe("SessionManager resize (smallest-wins)", () => {
 		expect(info.cols).toBe(120)
 		expect(info.rows).toBe(36)
 	})
+
+	it("mutes output during resize and unmutes after 150ms", async () => {
+		const ws1 = mockWs()
+		manager.addClient(sessionId, ws1, 120, 36)
+
+		const session = manager.get(sessionId)!
+		expect(session.muted).toBe(false)
+
+		manager.resize(sessionId, 80, 24, ws1)
+
+		expect(session.muted).toBe(true)
+
+		// Wait for mute timer to expire
+		await new Promise((r) => setTimeout(r, 200))
+		expect(session.muted).toBe(false)
+	})
+
+	it("does not mute when resize dimensions are unchanged", () => {
+		const ws1 = mockWs()
+		manager.addClient(sessionId, ws1, 120, 36)
+
+		const session = manager.get(sessionId)!
+		manager.resize(sessionId, 120, 36, ws1)
+
+		expect(session.muted).toBe(false)
+	})
+
+	it("mutes on removeClient when remaining client triggers resize", async () => {
+		const ws1 = mockWs()
+		const ws2 = mockWs()
+		manager.addClient(sessionId, ws1, 80, 24)
+		manager.addClient(sessionId, ws2, 120, 40)
+		manager.resize(sessionId, 80, 24, ws1)
+		manager.resize(sessionId, 120, 40, ws2)
+
+		const session = manager.get(sessionId)!
+		// Clear mute from previous resizes
+		session.muted = false
+		if (session.muteTimer) clearTimeout(session.muteTimer)
+		session.muteTimer = null
+
+		manager.removeClient(sessionId, ws1)
+
+		// Size changed from 80x24 to 120x40 — should mute
+		expect(session.muted).toBe(true)
+
+		await new Promise((r) => setTimeout(r, 200))
+		expect(session.muted).toBe(false)
+	})
 })

@@ -45,6 +45,9 @@ export interface Session {
 	tailProcess: ReturnType<typeof spawn> | null
 	/** 写入队列，保证顺序 */
 	writeQueue: Promise<void>
+	/** resize 期间静默输出，丢弃 tmux 重绘数据 */
+	muted: boolean
+	muteTimer: ReturnType<typeof setTimeout> | null
 }
 
 export class SessionManager {
@@ -158,6 +161,8 @@ export class SessionManager {
 			outputPath,
 			tailProcess: null,
 			writeQueue: Promise.resolve(),
+			muted: false,
+			muteTimer: null,
 		}
 
 		// pipe-pane 将 tmux 输出写入文件
@@ -185,6 +190,11 @@ export class SessionManager {
 
 		const flush = (): void => {
 			flushTimer = null
+			if (session.muted) {
+				// Discard output during resize redraw
+				pending = ""
+				return
+			}
 			if (pending.length > 0) {
 				const data = pending
 				pending = ""
@@ -302,7 +312,6 @@ export class SessionManager {
 		})
 	}
 
-	/** 调整终端尺寸 */
 	/** 客户端报告尺寸，取所有客户端最小值 resize tmux */
 	resize(sessionId: string, cols: number, rows: number, ws?: WebSocket): boolean {
 		const session = this.sessions.get(sessionId)
@@ -331,6 +340,15 @@ export class SessionManager {
 		if (minCols !== session.cols || minRows !== session.rows) {
 			session.cols = minCols
 			session.rows = minRows
+
+			// Mute output during resize to discard tmux redraw data
+			session.muted = true
+			if (session.muteTimer) clearTimeout(session.muteTimer)
+			session.muteTimer = setTimeout(() => {
+				session.muted = false
+				session.muteTimer = null
+			}, 150) // tmux redraws within ~50-100ms
+
 			tmuxResizeWindow(session.tmuxName, minCols, minRows).catch(() => {})
 		}
 		return true
@@ -362,6 +380,14 @@ export class SessionManager {
 				if (minCols !== Infinity && (minCols !== session.cols || minRows !== session.rows)) {
 					session.cols = minCols
 					session.rows = minRows
+
+					session.muted = true
+					if (session.muteTimer) clearTimeout(session.muteTimer)
+					session.muteTimer = setTimeout(() => {
+						session.muted = false
+						session.muteTimer = null
+					}, 150)
+
 					tmuxResizeWindow(session.tmuxName, minCols, minRows).catch(() => {})
 				}
 			}
