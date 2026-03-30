@@ -607,13 +607,22 @@ function getClientHtml(): string {
   // Shift+Enter: send ESC[13;2~ (recognized by pi editor as newline)
   // pi editor hardcodes: data === ESC + "[13;2~"
   var SHIFT_ENTER = String.fromCharCode(27) + '[13;2~';
+  var shiftEnterSent = false;
   term.attachCustomKeyEventHandler(function(e) {
-    if (e.type === 'keydown' && e.key === 'Enter' && e.shiftKey) {
-      if (ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: 'input', data: SHIFT_ENTER }));
+    if (e.key === 'Enter' && e.shiftKey) {
+      if (e.type === 'keydown') {
+        shiftEnterSent = true;
+        if (ws && ws.readyState === 1) {
+          ws.send(JSON.stringify({ type: 'input', data: SHIFT_ENTER }));
+        }
       }
-      return false;
+      return false; // block both keydown and keypress for Shift+Enter
     }
+    if (shiftEnterSent && e.type === 'keypress') {
+      shiftEnterSent = false;
+      return false; // block any lingering keypress from Shift+Enter
+    }
+    shiftEnterSent = false;
     // Intercept Ctrl+V / Cmd+V paste — handle via paste event instead
     if (e.type === 'keydown' && e.key === 'v' && (e.ctrlKey || e.metaKey)) {
       return true; // let browser fire paste event
