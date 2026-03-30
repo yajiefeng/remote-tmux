@@ -653,21 +653,36 @@ function getClientHtml(): string {
   })();
 
   // --- Resize ---
+  var lastCols = 0;
+  var lastRows = 0;
+  var resizeTimer = null;
+
   function handleResize() {
     fitAddon.fit();
-    if (ws && ws.readyState === 1) {
-      ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+    // Only send resize if dimensions actually changed
+    if (term.cols !== lastCols || term.rows !== lastRows) {
+      lastCols = term.cols;
+      lastRows = term.rows;
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+      }
     }
+    // Always keep viewport at bottom after resize
+    term.scrollToBottom();
   }
-  window.addEventListener('resize', handleResize);
+
+  function debouncedResize() {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(handleResize, 100);
+  }
+
+  window.addEventListener('resize', debouncedResize);
 
   // --- Soft keyboard adaptation (mobile) ---
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', function() {
-      // When soft keyboard opens, visualViewport shrinks
-      // Adjust body height so terminal fits above keyboard
       document.body.style.height = window.visualViewport.height + 'px';
-      handleResize();
+      debouncedResize();
     });
     window.visualViewport.addEventListener('scroll', function() {
       // Prevent page scroll when keyboard pushes content
