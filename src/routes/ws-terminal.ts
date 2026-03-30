@@ -131,7 +131,7 @@ export function handleWsTerminal(
 					sendError(ws, "INVALID_MESSAGE", "Invalid cols/rows")
 					return
 				}
-				const resizeOk = manager.resize(sessionId, cols, rows)
+				const resizeOk = manager.resize(sessionId, cols, rows, ws)
 				if (!resizeOk) {
 					sendError(ws, "SESSION_NOT_FOUND", "Session has been destroyed")
 					ws.close()

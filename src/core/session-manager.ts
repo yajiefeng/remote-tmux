@@ -25,12 +25,17 @@ import {
 
 const execFileAsync = promisify(execFile)
 
+export interface ClientInfo {
+	cols: number
+	rows: number
+}
+
 export interface Session {
 	sessionId: string
 	name: string
 	tmuxName: string
 	buffer: RingBuffer
-	clients: Set<WebSocket>
+	clients: Map<WebSocket, ClientInfo>
 	cols: number
 	rows: number
 	createdAt: Date
@@ -146,7 +151,7 @@ export class SessionManager {
 			name,
 			tmuxName,
 			buffer,
-			clients: new Set(),
+			clients: new Map(),
 			cols,
 			rows,
 			createdAt: new Date(),
@@ -226,7 +231,7 @@ export class SessionManager {
 		})
 
 		// 关闭所有 WS
-		for (const ws of session.clients) {
+		for (const [ws] of session.clients) {
 			ws.close()
 		}
 
@@ -298,29 +303,68 @@ export class SessionManager {
 	}
 
 	/** 调整终端尺寸 */
-	resize(sessionId: string, cols: number, rows: number): boolean {
+	/** 客户端报告尺寸，取所有客户端最小值 resize tmux */
+	resize(sessionId: string, cols: number, rows: number, ws?: WebSocket): boolean {
 		const session = this.sessions.get(sessionId)
 		if (!session) return false
 
-		tmuxResizeWindow(session.tmuxName, cols, rows).catch(() => {})
-		session.cols = cols
-		session.rows = rows
+		// 更新该客户端自身的尺寸
+		if (ws) {
+			const info = session.clients.get(ws)
+			if (info) {
+				info.cols = cols
+				info.rows = rows
+			}
+		}
+
+		// 取所有已连接客户端的最小 cols/rows（类似 tmux smallest 策略）
+		let minCols = cols
+		let minRows = rows
+		for (const [client, info] of session.clients) {
+			if (client.readyState === 1) {
+				if (info.cols < minCols) minCols = info.cols
+				if (info.rows < minRows) minRows = info.rows
+			}
+		}
+
+		// 只在尺寸真正变化时才 resize tmux
+		if (minCols !== session.cols || minRows !== session.rows) {
+			session.cols = minCols
+			session.rows = minRows
+			tmuxResizeWindow(session.tmuxName, minCols, minRows).catch(() => {})
+		}
 		return true
 	}
 
 	/** 添加 WS 客户端 */
-	addClient(sessionId: string, ws: WebSocket): boolean {
+	addClient(sessionId: string, ws: WebSocket, cols?: number, rows?: number): boolean {
 		const session = this.sessions.get(sessionId)
 		if (!session) return false
-		session.clients.add(ws)
+		session.clients.set(ws, { cols: cols ?? session.cols, rows: rows ?? session.rows })
 		return true
 	}
 
-	/** 移除 WS 客户端 */
+	/** 移除 WS 客户端，重新计算尺寸 */
 	removeClient(sessionId: string, ws: WebSocket): void {
 		const session = this.sessions.get(sessionId)
 		if (session) {
 			session.clients.delete(ws)
+			// 剩余客户端重新计算最小尺寸
+			if (session.clients.size > 0) {
+				let minCols = Infinity
+				let minRows = Infinity
+				for (const [client, info] of session.clients) {
+					if (client.readyState === 1) {
+						if (info.cols < minCols) minCols = info.cols
+						if (info.rows < minRows) minRows = info.rows
+					}
+				}
+				if (minCols !== Infinity && (minCols !== session.cols || minRows !== session.rows)) {
+					session.cols = minCols
+					session.rows = minRows
+					tmuxResizeWindow(session.tmuxName, minCols, minRows).catch(() => {})
+				}
+			}
 		}
 	}
 
@@ -329,7 +373,7 @@ export class SessionManager {
 		for (const session of this.sessions.values()) {
 			// 通知客户端
 			this.broadcast(session, { type: "closed", reason: "Server shutting down" })
-			for (const ws of session.clients) {
+			for (const [ws] of session.clients) {
 				ws.close()
 			}
 			// 停止 tail
@@ -351,7 +395,7 @@ export class SessionManager {
 	/** 广播消息给 session 的所有客户端 */
 	private broadcast(session: Session, message: object): void {
 		const data = JSON.stringify(message)
-		for (const ws of session.clients) {
+		for (const [ws] of session.clients) {
 			if (ws.readyState === 1) {
 				ws.send(data)
 			}
