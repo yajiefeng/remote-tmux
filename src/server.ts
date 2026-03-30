@@ -593,31 +593,59 @@ function getClientHtml(): string {
     setTimeout(function() { clearInterval(countdown); connect(); }, delay);
   }
 
-  // --- Input ---
-  var sendSeq = 0;
+  // --- Input + Mobile IME fix ---
+  // xterm.js on mobile may swallow CJK punctuation that doesn't go through
+  // composition. We use a pending-queue with bidirectional matching to handle
+  // both event orderings (input-before-onData and onData-before-input).
+  var pendingIME = [];         // input events waiting for onData confirmation
+  var recentNonAscii = [];     // onData sends not yet matched to an input event
+
   term.onData(function(data) {
-    sendSeq++;
+    // Forward match: input event already queued
+    var matched = false;
+    for (var i = 0; i < pendingIME.length; i++) {
+      if (!pendingIME[i].handled && pendingIME[i].data === data) {
+        pendingIME[i].handled = true;
+        matched = true;
+        break;
+      }
+    }
+    // Reverse record: onData fired before input event (same event loop turn)
+    if (!matched && data.charCodeAt(0) >= 128) {
+      recentNonAscii.push(data);
+      if (recentNonAscii.length > 16) recentNonAscii.shift();
+    }
     if (ws && ws.readyState === 1) {
       ws.send(JSON.stringify({ type: 'input', data: data }));
     }
   });
 
-  // --- Mobile IME fix: xterm.js may swallow CJK punctuation on mobile ---
   (function() {
     var xtermTextarea = document.querySelector('#terminal-container .xterm-helper-textarea');
     if (!xtermTextarea) return;
 
-    // Fallback: catch input events that xterm missed
     xtermTextarea.addEventListener('input', function(e) {
       var data = e.data;
       if (!data) return;
-      // Only intervene for non-ASCII characters (CJK, punctuation, etc.)
       if (data.charCodeAt(0) < 128) return;
-      // Give xterm.js a tick to process via onData
-      var seqBefore = sendSeq;
+
+      var entry = { data: data, handled: false };
+
+      // Reverse match: onData already fired for this char before input event
+      for (var i = 0; i < recentNonAscii.length; i++) {
+        if (recentNonAscii[i] === data) {
+          entry.handled = true;
+          recentNonAscii.splice(i, 1);
+          break;
+        }
+      }
+
+      pendingIME.push(entry);
+
       setTimeout(function() {
-        if (sendSeq !== seqBefore) return;
-        if (ws && ws.readyState === 1) {
+        var idx = pendingIME.indexOf(entry);
+        if (idx >= 0) pendingIME.splice(idx, 1);
+        if (!entry.handled && ws && ws.readyState === 1) {
           ws.send(JSON.stringify({ type: 'input', data: data }));
         }
       }, 50);
