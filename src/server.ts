@@ -612,7 +612,7 @@ function getClientHtml(): string {
       var data = e.data;
       if (!data) return;
       // Only intervene for non-ASCII characters (CJK, punctuation, etc.)
-      if (/^[\x00-\x7f]+$/.test(data)) return;
+      if (data.charCodeAt(0) < 128) return;
       // Give xterm.js a tick to process via onData
       setTimeout(function() {
         if (lastSentData === data) return;
