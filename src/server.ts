@@ -604,11 +604,12 @@ function getClientHtml(): string {
 
   // --- Input + Mobile IME fix ---
 
-  // Shift+Enter → xterm modifyOtherKeys format: ESC[27;2;13~ (shift+enter)
-  // This passes through tmux intact, unlike ESC+CR which gets intercepted
-  var SHIFT_ENTER = String.fromCharCode(27) + '[27;2;13~';
+  // Shift+Enter: send LF (0x0a) constructed at runtime
+  // pi editor recognizes single LF as newline insertion
+  var SHIFT_ENTER = String.fromCharCode(10);
   term.attachCustomKeyEventHandler(function(e) {
     if (e.type === 'keydown' && e.key === 'Enter' && e.shiftKey) {
+      console.log('[remote-tmux] Shift+Enter intercepted');
       if (ws && ws.readyState === 1) {
         ws.send(JSON.stringify({ type: 'input', data: SHIFT_ENTER }));
       }
