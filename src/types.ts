@@ -27,6 +27,11 @@ export interface WsInputMessage {
 	data: string
 }
 
+export interface WsPasteMessage {
+	type: "paste"
+	data: string
+}
+
 export interface WsResizeMessage {
 	type: "resize"
 	cols: number
@@ -38,7 +43,7 @@ export interface WsPingMessage {
 	ts: number
 }
 
-export type WsClientMessage = WsInputMessage | WsResizeMessage | WsPingMessage
+export type WsClientMessage = WsInputMessage | WsPasteMessage | WsResizeMessage | WsPingMessage
 
 // ----- WebSocket Messages: Server -> Client -----
 

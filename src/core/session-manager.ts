@@ -268,12 +268,12 @@ export class SessionManager {
 	}
 
 	/** 写入到 tmux session（load-buffer + paste-buffer，串行队列） */
-	write(sessionId: string, data: string): boolean {
+	write(sessionId: string, data: string, bracketed?: boolean): boolean {
 		const session = this.sessions.get(sessionId)
 		if (!session) return false
 
 		session.writeQueue = session.writeQueue
-			.then(() => this.doWrite(session.tmuxName, data))
+			.then(() => this.doWrite(session.tmuxName, data, bracketed))
 			.catch((err: Error) => {
 				console.error(`[session ${sessionId}] Write failed:`, err.message)
 			})
@@ -282,7 +282,7 @@ export class SessionManager {
 	}
 
 	/** 执行单次写入 */
-	private doWrite(tmuxName: string, data: string): Promise<void> {
+	private doWrite(tmuxName: string, data: string, bracketed?: boolean): Promise<void> {
 		return new Promise((resolve, reject) => {
 			const loadBuffer = spawn("tmux", ["load-buffer", "-"], {
 				stdio: ["pipe", "ignore", "pipe"],
@@ -301,7 +301,9 @@ export class SessionManager {
 					reject(new Error(`load-buffer exited ${code}: ${stderr}`))
 					return
 				}
-				execFileAsync("tmux", ["paste-buffer", "-t", tmuxName, "-d"])
+				const pasteArgs = ["paste-buffer", "-t", tmuxName, "-d"]
+				if (bracketed) pasteArgs.push("-p")
+				execFileAsync("tmux", pasteArgs)
 					.then(() => resolve())
 					.catch(reject)
 			})

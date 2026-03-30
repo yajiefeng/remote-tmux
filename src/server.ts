@@ -610,10 +610,27 @@ function getClientHtml(): string {
       if (ws && ws.readyState === 1) {
         ws.send(JSON.stringify({ type: 'input', data: '\n' }));
       }
-      return false; // prevent xterm default (which sends \r)
+      return false;
+    }
+    // Intercept Ctrl+V / Cmd+V paste — handle via paste event instead
+    if (e.type === 'keydown' && e.key === 'v' && (e.ctrlKey || e.metaKey)) {
+      return true; // let browser fire paste event
     }
     return true;
   });
+
+  // Intercept paste events to use bracketed paste mode
+  var xtermEl = document.querySelector('#terminal-container');
+  if (xtermEl) {
+    xtermEl.addEventListener('paste', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var text = (e.clipboardData || window.clipboardData).getData('text');
+      if (text && ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: 'paste', data: text }));
+      }
+    }, true); // capture phase to beat xterm.js
+  }
   // xterm.js on mobile may swallow CJK punctuation that doesn't go through
   // composition. We use a pending-queue with bidirectional matching to handle
   // both event orderings (input-before-onData and onData-before-input).
@@ -731,28 +748,27 @@ function getClientHtml(): string {
     });
   });
 
-  // --- Paste button ---
+  // --- Paste ---
+  function sendPaste(text) {
+    if (text && ws && ws.readyState === 1) {
+      ws.send(JSON.stringify({ type: 'paste', data: text }));
+    }
+  }
+
+  // Paste button
   document.getElementById('paste-btn').addEventListener('click', function() {
     if (navigator.clipboard && navigator.clipboard.readText) {
       navigator.clipboard.readText().then(function(text) {
-        if (text && ws && ws.readyState === 1) {
-          ws.send(JSON.stringify({ type: 'input', data: text }));
-        }
+        sendPaste(text);
         term.focus();
       }).catch(function() {
-        // Clipboard API 失败，fallback 弹 prompt
         var text = prompt('Paste content:');
-        if (text && ws && ws.readyState === 1) {
-          ws.send(JSON.stringify({ type: 'input', data: text }));
-        }
+        sendPaste(text);
         term.focus();
       });
     } else {
-      // 不支持 Clipboard API，用 prompt
       var text = prompt('Paste content:');
-      if (text && ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: 'input', data: text }));
-      }
+      sendPaste(text);
       term.focus();
     }
   });

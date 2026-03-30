@@ -124,6 +124,25 @@ export function handleWsTerminal(
 				break
 			}
 
+			case "paste": {
+				if (typeof msg.data !== "string") {
+					sendError(ws, "INVALID_MESSAGE", "data must be a string")
+					return
+				}
+				if (Buffer.byteLength(msg.data) > config.maxInputBytes) {
+					sendError(ws, "INPUT_TOO_LONG", `Max ${config.maxInputBytes} bytes`)
+					return
+				}
+				const pasteOk = manager.write(sessionId, msg.data, true)
+				if (!pasteOk) {
+					sendError(ws, "SESSION_NOT_FOUND", "Session has been destroyed")
+					ws.close()
+					return
+				}
+				audit?.log({ event: "session.input", sessionId, input: `[paste] ${msg.data}` })
+				break
+			}
+
 			case "resize": {
 				const cols = msg.cols
 				const rows = msg.rows
