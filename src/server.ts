@@ -604,12 +604,13 @@ function getClientHtml(): string {
 
   // --- Input + Mobile IME fix ---
 
-  // Shift+Enter → send ESC+CR (recognized as shift+enter by pi/kitty terminals)
-  var ESC_CR = String.fromCharCode(27, 13);
+  // Shift+Enter → xterm modifyOtherKeys format: ESC[27;2;13~ (shift+enter)
+  // This passes through tmux intact, unlike ESC+CR which gets intercepted
+  var SHIFT_ENTER = String.fromCharCode(27) + '[27;2;13~';
   term.attachCustomKeyEventHandler(function(e) {
     if (e.type === 'keydown' && e.key === 'Enter' && e.shiftKey) {
       if (ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: 'input', data: ESC_CR }));
+        ws.send(JSON.stringify({ type: 'input', data: SHIFT_ENTER }));
       }
       return false;
     }
