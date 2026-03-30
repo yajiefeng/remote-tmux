@@ -604,11 +604,12 @@ function getClientHtml(): string {
 
   // --- Input + Mobile IME fix ---
 
-  // Shift+Enter → newline instead of carriage return
+  // Shift+Enter → send ESC+CR (recognized as shift+enter by pi/kitty terminals)
+  var ESC_CR = String.fromCharCode(27, 13);
   term.attachCustomKeyEventHandler(function(e) {
     if (e.type === 'keydown' && e.key === 'Enter' && e.shiftKey) {
       if (ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: 'input', data: '\n' }));
+        ws.send(JSON.stringify({ type: 'input', data: ESC_CR }));
       }
       return false;
     }
