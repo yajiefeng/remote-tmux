@@ -143,8 +143,22 @@ export async function startServer(config: Config): Promise<void> {
 	})
 
 	// Graceful shutdown
+	let shuttingDown = false
 	function shutdown(): void {
+		if (shuttingDown) return
+		shuttingDown = true
 		console.log("\nShutting down...")
+
+		// Force exit after 5 seconds if graceful shutdown hangs
+		const forceTimer = setTimeout(() => {
+			console.log("Force exit (timeout)")
+			process.exit(1)
+		}, 5000)
+		forceTimer.unref()
+
+		// Close all WS connections first
+		wss.clients.forEach((client) => client.close())
+
 		clearInterval(cleanupInterval)
 		idleMonitor.dispose()
 		manager.destroyAll().then(() => {
@@ -154,6 +168,8 @@ export async function startServer(config: Config): Promise<void> {
 				console.log("Server closed")
 				process.exit(0)
 			})
+		}).catch(() => {
+			process.exit(1)
 		})
 	}
 
