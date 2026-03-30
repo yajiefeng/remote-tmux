@@ -594,9 +594,9 @@ function getClientHtml(): string {
   }
 
   // --- Input ---
-  var lastSentData = '';
+  var sendSeq = 0;
   term.onData(function(data) {
-    lastSentData = data;
+    sendSeq++;
     if (ws && ws.readyState === 1) {
       ws.send(JSON.stringify({ type: 'input', data: data }));
     }
@@ -614,8 +614,9 @@ function getClientHtml(): string {
       // Only intervene for non-ASCII characters (CJK, punctuation, etc.)
       if (data.charCodeAt(0) < 128) return;
       // Give xterm.js a tick to process via onData
+      var seqBefore = sendSeq;
       setTimeout(function() {
-        if (lastSentData === data) return;
+        if (sendSeq !== seqBefore) return;
         if (ws && ws.readyState === 1) {
           ws.send(JSON.stringify({ type: 'input', data: data }));
         }
