@@ -9,3 +9,4 @@
    4. Run tests, confirm they pass
    5. Commit
 2. **No push without permission**: Only commit locally. Never push to GitHub unless explicitly told to.
+3. **Keep it minimal**: Prefer the simplest working solution; remove unused or duplicate logic/modules instead of keeping parallel implementations.
