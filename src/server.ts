@@ -311,6 +311,11 @@ export function getClientHtml(): string {
   term.unicode.activeVersion = '11';
   term.open(document.getElementById('terminal-container'));
 
+  // Keep cursor area visible when terminal gains focus (tap on mobile)
+  term.textarea.addEventListener('focus', function() {
+    term.scrollToBottom();
+  });
+
   // --- 移动端触摸滚动加速 ---
   (function() {
     var container = document.querySelector('#terminal-container .xterm-screen');
@@ -778,6 +783,9 @@ export function getClientHtml(): string {
     var keyboardInset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
     if (keyboardInset < 80) keyboardInset = 0;
     sessionPanel.style.paddingBottom = keyboardInset + 'px';
+    // Scroll to bottom immediately so the cursor area stays visible
+    // during keyboard show/hide (don't wait for debounced resize)
+    term.scrollToBottom();
     debouncedResize();
   }
 
