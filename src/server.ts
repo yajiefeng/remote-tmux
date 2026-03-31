@@ -683,7 +683,9 @@ function getClientHtml(): string {
   }
 
   function imeOnInput(data) {
-    if (!data || data.charCodeAt(0) < 128) return null;
+    if (!data) return null;
+    // Keep fallback narrow: only CJK/full-width punctuation.
+    if (!(/[\u3000-\u303F\uFF00-\uFFEF]/u).test(data)) return null;
     var id = imeNextId++;
     imePending.set(id, { data: data, handled: imeConsumeRecent(data) });
     return id;

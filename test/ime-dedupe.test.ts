@@ -2,22 +2,23 @@ import { describe, expect, it } from "vitest"
 import { ImeDeduper } from "../src/client/ime-dedupe.js"
 
 describe("ImeDeduper", () => {
-	it("marks IME input as handled when onData emitted a combined Chinese chunk", () => {
+	it("does not fallback-track normal Han characters", () => {
 		const deduper = new ImeDeduper()
 
-		// Some mobile keyboards emit combined data in onData
-		deduper.onData("你好")
-
-		const id1 = deduper.onInput("你")
-		const id2 = deduper.onInput("好")
-
-		expect(id1).not.toBeNull()
-		expect(id2).not.toBeNull()
-		expect(deduper.shouldSendFallback(id1!)).toBe(false)
-		expect(deduper.shouldSendFallback(id2!)).toBe(false)
+		const id = deduper.onInput("你")
+		expect(id).toBeNull()
 	})
 
-	it("requests fallback send when IME input has no matching onData", () => {
+	it("marks CJK punctuation as handled when onData already emitted it", () => {
+		const deduper = new ImeDeduper()
+		deduper.onData("，")
+
+		const id = deduper.onInput("，")
+		expect(id).not.toBeNull()
+		expect(deduper.shouldSendFallback(id!)).toBe(false)
+	})
+
+	it("requests fallback send for CJK punctuation without matching onData", () => {
 		const deduper = new ImeDeduper()
 		const id = deduper.onInput("，")
 

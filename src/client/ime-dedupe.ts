@@ -26,7 +26,7 @@ export class ImeDeduper {
 	}
 
 	onInput(data: string): number | null {
-		if (!data || data.charCodeAt(0) < 128) {
+		if (!this.isFallbackCandidate(data)) {
 			return null
 		}
 
@@ -41,6 +41,13 @@ export class ImeDeduper {
 		if (!entry) return false
 		this.pending.delete(id)
 		return !entry.handled
+	}
+
+	private isFallbackCandidate(data: string): boolean {
+		if (!data) return false
+		// Keep fallback narrow: only CJK/full-width punctuation where some
+		// mobile keyboards may skip xterm onData.
+		return /[\u3000-\u303F\uFF00-\uFFEF]/u.test(data)
 	}
 
 	private consumeRecent(data: string): boolean {
