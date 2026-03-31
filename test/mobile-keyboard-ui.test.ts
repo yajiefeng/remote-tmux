@@ -13,4 +13,10 @@ describe("mobile session naming UI", () => {
 		expect(html).toContain("newSessionInput.addEventListener('focus'")
 		expect(html).toContain("newSessionInput.scrollIntoView")
 	})
+
+	it("resets keyboard inset when input blurs", () => {
+		const html = getClientHtml()
+		expect(html).toContain("newSessionInput.addEventListener('blur'")
+		expect(html).toContain("setTimeout(syncViewportInsets, 120)")
+	})
 })

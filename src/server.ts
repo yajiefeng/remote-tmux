@@ -455,6 +455,11 @@ export function getClientHtml(): string {
     }, 80);
   });
 
+  var syncViewportInsets = function() {};
+  newSessionInput.addEventListener('blur', function() {
+    setTimeout(syncViewportInsets, 120);
+  });
+
   async function ensureSession() {
     // 已有 sid 且通过 WS 验证过，直接返回（重连场景）
     if (currentSid) return currentSid;
@@ -756,13 +761,14 @@ export function getClientHtml(): string {
 
   // --- Soft keyboard adaptation (mobile) ---
   if (window.visualViewport) {
-    function syncViewportInsets() {
+    syncViewportInsets = function() {
       var vv = window.visualViewport;
       document.body.style.height = vv.height + 'px';
       var keyboardInset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      if (keyboardInset < 80) keyboardInset = 0;
       sessionPanel.style.paddingBottom = keyboardInset + 'px';
       debouncedResize();
-    }
+    };
 
     window.visualViewport.addEventListener('resize', syncViewportInsets);
     window.visualViewport.addEventListener('scroll', function() {
