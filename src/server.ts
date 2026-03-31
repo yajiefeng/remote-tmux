@@ -456,7 +456,6 @@ export function getClientHtml(): string {
     }, 80);
   });
 
-  var syncViewportInsets = function() {};
   newSessionInput.addEventListener('blur', function() {
     setTimeout(syncViewportInsets, 120);
   });
@@ -660,6 +659,12 @@ export function getClientHtml(): string {
   var imePending = new Map();
   var imeRecentNonAscii = [];
   var imeNextId = 1;
+  var IME_RECENT_TTL = 500;
+
+  function imePruneRecent() {
+    var cutoff = Date.now() - IME_RECENT_TTL;
+    imeRecentNonAscii = imeRecentNonAscii.filter(function(e) { return e.ts > cutoff; });
+  }
 
   function imeConsumeRecent(data) {
     var chars = Array.from(data).filter(function(ch) { return ch.charCodeAt(0) >= 128; });
@@ -667,7 +672,10 @@ export function getClientHtml(): string {
 
     var snapshot = imeRecentNonAscii.slice();
     for (var i = 0; i < chars.length; i++) {
-      var idx = snapshot.indexOf(chars[i]);
+      var idx = -1;
+      for (var j = 0; j < snapshot.length; j++) {
+        if (snapshot[j].ch === chars[i]) { idx = j; break; }
+      }
       if (idx < 0) return false;
       snapshot.splice(idx, 1);
     }
@@ -676,6 +684,7 @@ export function getClientHtml(): string {
   }
 
   function imeOnData(data) {
+    imePruneRecent();
     var matched = false;
     imePending.forEach(function(entry) {
       if (!matched && !entry.handled && entry.data === data) {
@@ -685,8 +694,9 @@ export function getClientHtml(): string {
     });
 
     if (!matched) {
+      var ts = Date.now();
       Array.from(data).forEach(function(ch) {
-        if (ch.charCodeAt(0) >= 128) imeRecentNonAscii.push(ch);
+        if (ch.charCodeAt(0) >= 128) imeRecentNonAscii.push({ ch: ch, ts: ts });
       });
       if (imeRecentNonAscii.length > 64) {
         imeRecentNonAscii = imeRecentNonAscii.slice(-64);
@@ -696,8 +706,8 @@ export function getClientHtml(): string {
 
   function imeOnInput(data) {
     if (!data) return null;
-    // Keep fallback narrow: only CJK/full-width punctuation.
-    if (!(/[\u3000-\u303F\uFF00-\uFFEF]/u).test(data)) return null;
+    if (!(/[\\u2010-\\u2044\\u3000-\\u303F\\uFF00-\\uFFEF]/u).test(data)) return null;
+    imePruneRecent();
     var id = imeNextId++;
     imePending.set(id, { data: data, handled: imeConsumeRecent(data) });
     return id;
@@ -761,16 +771,17 @@ export function getClientHtml(): string {
   window.addEventListener('resize', debouncedResize);
 
   // --- Soft keyboard adaptation (mobile) ---
-  if (window.visualViewport) {
-    syncViewportInsets = function() {
-      var vv = window.visualViewport;
-      document.body.style.height = vv.height + 'px';
-      var keyboardInset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-      if (keyboardInset < 80) keyboardInset = 0;
-      sessionPanel.style.paddingBottom = keyboardInset + 'px';
-      debouncedResize();
-    };
+  function syncViewportInsets() {
+    if (!window.visualViewport) return;
+    var vv = window.visualViewport;
+    document.body.style.height = vv.height + 'px';
+    var keyboardInset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    if (keyboardInset < 80) keyboardInset = 0;
+    sessionPanel.style.paddingBottom = keyboardInset + 'px';
+    debouncedResize();
+  }
 
+  if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', syncViewportInsets);
     window.visualViewport.addEventListener('scroll', function() {
       syncViewportInsets();
