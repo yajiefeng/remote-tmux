@@ -293,7 +293,7 @@ export function getClientHtml(): string {
   if (!TOKEN) { document.body.innerText = 'Token required'; return; }
 
   // --- Terminal ---
-  const term = new window.Terminal({
+  window._term = new window.Terminal({
     fontSize: 14,
     fontFamily: '"Maple Mono NF CN", "JetBrains Mono", monospace',
     theme: { background: '#1e1e1e' },
@@ -303,6 +303,7 @@ export function getClientHtml(): string {
     smoothScrollDuration: 100,
     overviewRuler: { width: 0 },
   });
+  var term = window._term;
   const fitAddon = new window.FitAddon.FitAddon();
   term.loadAddon(fitAddon);
   const unicode11Addon = new window.Unicode11Addon.Unicode11Addon();
