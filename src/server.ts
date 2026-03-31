@@ -643,26 +643,61 @@ function getClientHtml(): string {
     }, true); // capture phase to beat xterm.js
   }
   // xterm.js on mobile may swallow CJK punctuation that doesn't go through
-  // composition. We use a pending-queue with bidirectional matching to handle
-  // both event orderings (input-before-onData and onData-before-input).
-  var pendingIME = [];         // input events waiting for onData confirmation
-  var recentNonAscii = [];     // onData sends not yet matched to an input event
+  // composition. Use a deduper so input fallback only sends when onData truly
+  // didn't deliver that CJK character.
+  var imePending = new Map();
+  var imeRecentNonAscii = [];
+  var imeNextId = 1;
 
-  term.onData(function(data) {
-    // Forward match: input event already queued
+  function imeConsumeRecent(data) {
+    var chars = Array.from(data).filter(function(ch) { return ch.charCodeAt(0) >= 128; });
+    if (chars.length === 0) return false;
+
+    var snapshot = imeRecentNonAscii.slice();
+    for (var i = 0; i < chars.length; i++) {
+      var idx = snapshot.indexOf(chars[i]);
+      if (idx < 0) return false;
+      snapshot.splice(idx, 1);
+    }
+    imeRecentNonAscii = snapshot;
+    return true;
+  }
+
+  function imeOnData(data) {
     var matched = false;
-    for (var i = 0; i < pendingIME.length; i++) {
-      if (!pendingIME[i].handled && pendingIME[i].data === data) {
-        pendingIME[i].handled = true;
+    imePending.forEach(function(entry) {
+      if (!matched && !entry.handled && entry.data === data) {
+        entry.handled = true;
         matched = true;
-        break;
+      }
+    });
+
+    if (!matched) {
+      Array.from(data).forEach(function(ch) {
+        if (ch.charCodeAt(0) >= 128) imeRecentNonAscii.push(ch);
+      });
+      if (imeRecentNonAscii.length > 64) {
+        imeRecentNonAscii = imeRecentNonAscii.slice(-64);
       }
     }
-    // Reverse record: onData fired before input event (same event loop turn)
-    if (!matched && data.charCodeAt(0) >= 128) {
-      recentNonAscii.push(data);
-      if (recentNonAscii.length > 16) recentNonAscii.shift();
-    }
+  }
+
+  function imeOnInput(data) {
+    if (!data || data.charCodeAt(0) < 128) return null;
+    var id = imeNextId++;
+    imePending.set(id, { data: data, handled: imeConsumeRecent(data) });
+    return id;
+  }
+
+  function imeShouldSendFallback(id) {
+    var entry = imePending.get(id);
+    if (!entry) return false;
+    imePending.delete(id);
+    return !entry.handled;
+  }
+
+  term.onData(function(data) {
+    imeOnData(data);
     if (ws && ws.readyState === 1) {
       ws.send(JSON.stringify({ type: 'input', data: data }));
     }
@@ -674,26 +709,11 @@ function getClientHtml(): string {
 
     xtermTextarea.addEventListener('input', function(e) {
       var data = e.data;
-      if (!data) return;
-      if (data.charCodeAt(0) < 128) return;
-
-      var entry = { data: data, handled: false };
-
-      // Reverse match: onData already fired for this char before input event
-      for (var i = 0; i < recentNonAscii.length; i++) {
-        if (recentNonAscii[i] === data) {
-          entry.handled = true;
-          recentNonAscii.splice(i, 1);
-          break;
-        }
-      }
-
-      pendingIME.push(entry);
+      var id = imeOnInput(data);
+      if (id === null) return;
 
       setTimeout(function() {
-        var idx = pendingIME.indexOf(entry);
-        if (idx >= 0) pendingIME.splice(idx, 1);
-        if (!entry.handled && ws && ws.readyState === 1) {
+        if (imeShouldSendFallback(id) && ws && ws.readyState === 1) {
           ws.send(JSON.stringify({ type: 'input', data: data }));
         }
       }, 50);
