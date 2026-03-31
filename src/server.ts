@@ -198,7 +198,7 @@ export async function startServer(config: Config): Promise<void> {
 }
 
 /** P0: 内联的最小前端 HTML（后续移到 client/ 目录） */
-function getClientHtml(): string {
+export function getClientHtml(): string {
 	return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -447,6 +447,12 @@ function getClientHtml(): string {
     var created = await apiPost('/api/sessions', { name: name });
     newSessionInput.value = '';
     switchSession(created.sessionId, created.name);
+  });
+
+  newSessionInput.addEventListener('focus', function() {
+    setTimeout(function() {
+      newSessionInput.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 80);
   });
 
   async function ensureSession() {
@@ -750,14 +756,21 @@ function getClientHtml(): string {
 
   // --- Soft keyboard adaptation (mobile) ---
   if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', function() {
-      document.body.style.height = window.visualViewport.height + 'px';
+    function syncViewportInsets() {
+      var vv = window.visualViewport;
+      document.body.style.height = vv.height + 'px';
+      var keyboardInset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      sessionPanel.style.paddingBottom = keyboardInset + 'px';
       debouncedResize();
-    });
+    }
+
+    window.visualViewport.addEventListener('resize', syncViewportInsets);
     window.visualViewport.addEventListener('scroll', function() {
+      syncViewportInsets();
       // Prevent page scroll when keyboard pushes content
       window.scrollTo(0, 0);
     });
+    syncViewportInsets();
   }
 
   // --- Shortcut buttons ---
