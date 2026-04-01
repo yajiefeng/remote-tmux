@@ -215,7 +215,8 @@ export function getClientHtml(): string {
     font-display: swap;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: #1e1e1e; color: #fff; font-family: system-ui; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+  html { overflow: hidden; overscroll-behavior: none; }
+  body { background: #1e1e1e; color: #fff; font-family: system-ui; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; overscroll-behavior: none; }
   #status-bar { padding: 6px 12px; font-size: 13px; display: flex; justify-content: space-between; align-items: center; background: #2d2d2d; flex-shrink: 0; }
   #status-bar .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
   #status-bar .dot.connected { background: #4caf50; }
@@ -792,6 +793,8 @@ export function getClientHtml(): string {
     var keyboardInset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
     if (keyboardInset < 80) keyboardInset = 0;
     sessionPanel.style.paddingBottom = keyboardInset + 'px';
+    // Prevent browser-level page scroll during keyboard animation
+    window.scrollTo(0, 0);
     // Fit + scroll immediately on every viewport change.
     // fitAddon.fit() is a no-op when cell dimensions don't change,
     // so calling it on each animation frame is cheap. This ensures
@@ -799,15 +802,16 @@ export function getClientHtml(): string {
     handleResize();
     // Safety: one final pass after animation fully settles
     if (settleTimer) clearTimeout(settleTimer);
-    settleTimer = setTimeout(handleResize, 300);
+    settleTimer = setTimeout(function() {
+      handleResize();
+      window.scrollTo(0, 0);
+    }, 300);
   }
 
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', syncViewportInsets);
     window.visualViewport.addEventListener('scroll', function() {
       syncViewportInsets();
-      // Prevent page scroll when keyboard pushes content
-      window.scrollTo(0, 0);
     });
     syncViewportInsets();
   }
