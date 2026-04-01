@@ -12,10 +12,17 @@ describe("ImeDedupe", () => {
 
 	// --- needsFallback ---
 
-	it("returns false for null, empty, and ASCII", () => {
+	it("returns false for null, empty, and ASCII letters", () => {
 		expect(ImeDedupe.needsFallback(null)).toBe(false)
 		expect(ImeDedupe.needsFallback("")).toBe(false)
 		expect(ImeDedupe.needsFallback("abc")).toBe(false)
+	})
+
+	it("returns true for digits", () => {
+		expect(ImeDedupe.needsFallback("0")).toBe(true)
+		expect(ImeDedupe.needsFallback("5")).toBe(true)
+		expect(ImeDedupe.needsFallback("9")).toBe(true)
+		expect(ImeDedupe.needsFallback("123")).toBe(true)
 	})
 
 	it("returns true for CJK Symbols and Punctuation (U+3000-303F)", () => {
@@ -108,13 +115,35 @@ describe("ImeDedupe", () => {
 		expect(dedupe.shouldSendFallback(id!)).toBe(true)
 	})
 
+	// --- digits (IME swallows on mobile) ---
+
+	it("digit: onData before input deduplicates", () => {
+		dedupe.onData("5")
+		const id = dedupe.onInput("5")
+		expect(id).not.toBeNull()
+		expect(dedupe.shouldSendFallback(id!)).toBe(false)
+	})
+
+	it("digit: input without onData sends fallback", () => {
+		const id = dedupe.onInput("5")
+		expect(id).not.toBeNull()
+		expect(dedupe.shouldSendFallback(id!)).toBe(true)
+	})
+
+	it("digit: input before onData deduplicates", () => {
+		const id = dedupe.onInput("5")
+		expect(id).not.toBeNull()
+		dedupe.onData("5")
+		expect(dedupe.shouldSendFallback(id!)).toBe(false)
+	})
+
 	// --- non-CJK-punctuation skipped ---
 
 	it("returns null for non-CJK-punctuation input (Han chars)", () => {
 		expect(dedupe.onInput("\u4F60")).toBeNull() // 你
 	})
 
-	it("returns null for ASCII input", () => {
+	it("returns null for ASCII letter input", () => {
 		expect(dedupe.onInput("a")).toBeNull()
 	})
 

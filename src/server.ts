@@ -667,24 +667,29 @@ export function getClientHtml(): string {
       }
     }, true); // capture phase to beat xterm.js
   }
-  // xterm.js on mobile may swallow CJK punctuation that doesn't go through
-  // composition. Use a deduper so input fallback only sends when onData truly
-  // didn't deliver that CJK character.
+  // xterm.js on mobile may swallow CJK punctuation and digits that don't go
+  // through composition when a CJK IME is active. Use a deduper so input
+  // fallback only sends when onData truly didn't deliver that character.
   var imePending = new Map();
-  var imeRecentNonAscii = [];
+  var imeRecentChars = [];
   var imeNextId = 1;
   var IME_RECENT_TTL = 500;
+  var IME_FALLBACK_RE = /[0-9\\u2010-\\u2044\\u3000-\\u303F\\uFF00-\\uFFEF]/;
+
+  function isFallbackChar(ch) {
+    return IME_FALLBACK_RE.test(ch);
+  }
 
   function imePruneRecent() {
     var cutoff = Date.now() - IME_RECENT_TTL;
-    imeRecentNonAscii = imeRecentNonAscii.filter(function(e) { return e.ts > cutoff; });
+    imeRecentChars = imeRecentChars.filter(function(e) { return e.ts > cutoff; });
   }
 
   function imeConsumeRecent(data) {
-    var chars = Array.from(data).filter(function(ch) { return ch.charCodeAt(0) >= 128; });
+    var chars = Array.from(data).filter(isFallbackChar);
     if (chars.length === 0) return false;
 
-    var snapshot = imeRecentNonAscii.slice();
+    var snapshot = imeRecentChars.slice();
     for (var i = 0; i < chars.length; i++) {
       var idx = -1;
       for (var j = 0; j < snapshot.length; j++) {
@@ -693,7 +698,7 @@ export function getClientHtml(): string {
       if (idx < 0) return false;
       snapshot.splice(idx, 1);
     }
-    imeRecentNonAscii = snapshot;
+    imeRecentChars = snapshot;
     return true;
   }
 
@@ -710,17 +715,17 @@ export function getClientHtml(): string {
     if (!matched) {
       var ts = Date.now();
       Array.from(data).forEach(function(ch) {
-        if (ch.charCodeAt(0) >= 128) imeRecentNonAscii.push({ ch: ch, ts: ts });
+        if (isFallbackChar(ch)) imeRecentChars.push({ ch: ch, ts: ts });
       });
-      if (imeRecentNonAscii.length > 64) {
-        imeRecentNonAscii = imeRecentNonAscii.slice(-64);
+      if (imeRecentChars.length > 64) {
+        imeRecentChars = imeRecentChars.slice(-64);
       }
     }
   }
 
   function imeOnInput(data) {
     if (!data) return null;
-    if (!(/[\\u2010-\\u2044\\u3000-\\u303F\\uFF00-\\uFFEF]/u).test(data)) return null;
+    if (!IME_FALLBACK_RE.test(data)) return null;
     imePruneRecent();
     var id = imeNextId++;
     imePending.set(id, { data: data, handled: imeConsumeRecent(data) });
