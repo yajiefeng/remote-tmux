@@ -138,12 +138,26 @@ export async function handleSessionsRoute(
 			json(res, 400, { code: "INVALID_MESSAGE", message: "Missing sessionId" })
 			return
 		}
+		// If cols/rows provided, resize tmux first so capture matches client dimensions
+		const cols = parseInt(url.searchParams.get("cols") ?? "0", 10)
+		const rows = parseInt(url.searchParams.get("rows") ?? "0", 10)
+		if (cols > 0 && rows > 0) {
+			manager.resize(sessionId, cols, rows)
+			// Give tmux + application time to process the resize and redraw
+			await new Promise((resolve) => setTimeout(resolve, 100))
+		}
 		const result = await manager.snapshot(sessionId)
 		if (!result) {
 			json(res, 404, { code: "SESSION_NOT_FOUND", message: "Session not found" })
 			return
 		}
-		json(res, 200, { sessionId, screen: result.screen, cursor: result.cursor })
+		json(res, 200, {
+			sessionId,
+			screen: result.screen,
+			cursor: result.cursor,
+			cursorX: result.cursorX,
+			cursorY: result.cursorY,
+		})
 		return
 	}
 

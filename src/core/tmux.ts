@@ -79,25 +79,6 @@ export async function tmuxKillSession(name: string): Promise<void> {
 	}
 }
 
-/** 抓取 pane 内容（调试用） */
-export async function tmuxCapturePaneLines(
-	name: string,
-	lines: number = 50,
-): Promise<string[]> {
-	try {
-		const { stdout } = await exec("tmux", [
-			"capture-pane",
-			"-pt",
-			`${name}:0.0`,
-			"-S",
-			String(-lines),
-		])
-		return stdout.split("\n")
-	} catch {
-		return []
-	}
-}
-
 /** 抓取 pane 纯文本内容（用于重连恢复，不带 escape 序列避免渲染错乱） */
 export async function tmuxCapturePaneText(name: string): Promise<string> {
 	try {
@@ -121,24 +102,28 @@ export async function tmuxCapturePaneText(name: string): Promise<string> {
 	}
 }
 
-/** 抓取当前屏幕快照（带 escape 序列，用于 session 切换时快速恢复画面） */
-export async function tmuxCapturePaneEscape(name: string): Promise<string> {
+/** 抓取当前屏幕快照（带 escape 序列 + scrollback，用于 session 切换时快速恢复画面） */
+export async function tmuxCapturePaneEscape(name: string, scrollbackLines: number = 500): Promise<string> {
 	try {
 		const { stdout } = await exec("tmux", [
 			"capture-pane",
 			"-p",
 			"-e",
+			"-S",
+			String(-scrollbackLines),
 			"-t",
 			`${name}:0.0`,
 		])
-		// tmux outputs \n but xterm.js needs \r\n to return cursor to column 0
+		// tmux outputs \n but xterm.js needs \r\n to return cursor to column 0.
+		// Do NOT strip trailing blank lines — they're needed to keep the viewport
+		// aligned with tmux's visible area for correct cursor positioning.
 		const lines = stdout.split("\n")
-		// 去掉尾部空行
-		while (lines.length > 0 && lines[lines.length - 1]!.trim() === "") {
+		// stdout ends with a trailing \n, producing one extra empty element
+		if (lines.length > 0 && lines[lines.length - 1] === "") {
 			lines.pop()
 		}
 		if (lines.length === 0) return ""
-		return lines.join("\r\n") + "\r\n"
+		return lines.join("\r\n")
 	} catch {
 		return ""
 	}
@@ -193,5 +178,22 @@ export async function tmuxGetSize(name: string): Promise<{ cols: number; rows: n
 		return { cols: cols || 120, rows: rows || 36 }
 	} catch {
 		return { cols: 120, rows: 36 }
+	}
+}
+
+/** 获取 pane 中的光标位置（0-based） */
+export async function tmuxGetCursorPosition(name: string): Promise<{ x: number; y: number }> {
+	try {
+		const { stdout } = await exec("tmux", [
+			"display-message",
+			"-t",
+			name,
+			"-p",
+			"#{cursor_x}\t#{cursor_y}",
+		])
+		const [x, y] = stdout.trim().split("\t").map(Number)
+		return { x: x || 0, y: y || 0 }
+	} catch {
+		return { x: 0, y: 0 }
 	}
 }

@@ -511,12 +511,16 @@ export function getClientHtml(): string {
 
     try {
       if (isNewSession) {
-        // Fresh session switch: use tmux capture-pane snapshot (instant)
-        var url = '/api/sessions/' + sid + '/snapshot';
+        // Fresh session switch: capture current screen (with resize to match client)
+        var url = '/api/sessions/' + sid + '/snapshot?cols=' + term.cols + '&rows=' + term.rows;
         var res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + TOKEN } });
         var snap = await res.json();
         if (snap.screen) {
           term.write(snap.screen);
+          // Restore cursor position from tmux (cursorY is 0-based, ESC[H is 1-based)
+          if (snap.cursorY !== undefined) {
+            term.write('\\x1b[' + (snap.cursorY + 1) + ';' + (snap.cursorX + 1) + 'H');
+          }
         }
         lastSeq = snap.cursor || 0;
       } else {
@@ -558,6 +562,7 @@ export function getClientHtml(): string {
     // Scroll to bottom then reveal — user sees only the latest content
     term.scrollToBottom();
     tc.style.visibility = 'visible';
+    term.focus();
   }
 
   // --- WebSocket ---
@@ -587,9 +592,9 @@ export function getClientHtml(): string {
         case 'ready':
           setStatus('connected', 'Connected');
           sessionName.textContent = sid.substring(0, 8);
-          // Send current size
+          // Send current size (for reconnect; session switch resizes via snapshot)
           ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
-          // Always load history (works for both fresh page load and reconnect)
+          // Load history/snapshot
           loadHistory(sid);
           break;
         case 'output':

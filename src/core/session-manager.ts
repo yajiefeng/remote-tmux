@@ -17,6 +17,7 @@ import {
 	tmuxCapturePaneEscape,
 	tmuxCapturePaneText,
 	tmuxCreate,
+	tmuxGetCursorPosition,
 	tmuxGetSize,
 	tmuxKillSession,
 	tmuxListSessions,
@@ -179,31 +180,43 @@ export class SessionManager {
 			stdio: ["ignore", "pipe", "ignore"],
 		})
 
-		// 16ms flush 合并碎片
-		let pending = ""
-		let flushTimer: ReturnType<typeof setTimeout> | null = null
-		const FLUSH_INTERVAL_MS = 16
+		// Screen-scraping approach: pipe-pane detects output activity,
+		// then we periodically capture-pane to get the fully rendered screen.
+		// This avoids forwarding raw escape sequences with cursor movements
+		// that xterm.js can't render atomically (no DEC mode 2026 support).
+		let activityDetected = false
+		let captureTimer: ReturnType<typeof setInterval> | null = null
+		let lastScreen = ""
+		const CAPTURE_INTERVAL_MS = 50
 
-		const flush = (): void => {
-			flushTimer = null
-			if (pending.length > 0) {
-				const data = pending
-				pending = ""
+		const captureAndBroadcast = async (): Promise<void> => {
+			if (!activityDetected) return
+			activityDetected = false
+			try {
+				const [screen, pos] = await Promise.all([
+					tmuxCapturePaneEscape(session.tmuxName),
+					tmuxGetCursorPosition(session.tmuxName),
+				])
+				if (screen === lastScreen) return
+				lastScreen = screen
+				// Full-screen replacement: clear + home + content + cursor position
+				const cursorSeq = `\x1b[${pos.y + 1};${pos.x + 1}H`
+				const data = "\x1b[2J\x1b[H" + screen + cursorSeq
 				const seq = session.buffer.append(data)
 				this.broadcast(session, { type: "output", data, seq })
+			} catch {
+				// tmux pane might be gone
 			}
 		}
 
-		tail.stdout!.on("data", (chunk: Buffer) => {
-			pending += chunk.toString()
-			if (!flushTimer) {
-				flushTimer = setTimeout(flush, FLUSH_INTERVAL_MS)
-			}
+		tail.stdout!.on("data", () => {
+			activityDetected = true
 		})
 
+		captureTimer = setInterval(() => void captureAndBroadcast(), CAPTURE_INTERVAL_MS)
+
 		tail.on("exit", () => {
-			if (flushTimer) clearTimeout(flushTimer)
-			flush()
+			if (captureTimer) clearInterval(captureTimer)
 			console.log(`[session ${session.sessionId}] tail process exited`)
 		})
 
@@ -220,13 +233,16 @@ export class SessionManager {
 		return Array.from(this.sessions.values()).map((s) => this.toInfo(s))
 	}
 
-	/** 获取当前屏幕快照（带 escape 序列）+ 当前 seq */
-	async snapshot(sessionId: string): Promise<{ screen: string; cursor: number } | null> {
+	/** 获取当前屏幕快照（带 escape 序列）+ 当前 seq + 光标位置 */
+	async snapshot(sessionId: string): Promise<{ screen: string; cursor: number; cursorX: number; cursorY: number } | null> {
 		const session = this.sessions.get(sessionId)
 		if (!session) return null
-		const screen = await tmuxCapturePaneEscape(session.tmuxName)
+		const [screen, pos] = await Promise.all([
+			tmuxCapturePaneEscape(session.tmuxName),
+			tmuxGetCursorPosition(session.tmuxName),
+		])
 		const cursor = session.buffer.getCurrentSeq()
-		return { screen, cursor }
+		return { screen, cursor, cursorX: pos.x, cursorY: pos.y }
 	}
 
 	/** 销毁 session */
