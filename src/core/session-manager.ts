@@ -14,6 +14,7 @@ import type { Config } from "../config.js"
 import type { CreateSessionRequest, SessionInfo } from "../types.js"
 import { RingBuffer } from "./ring-buffer.js"
 import {
+	tmuxCapturePaneEscape,
 	tmuxCapturePaneText,
 	tmuxCreate,
 	tmuxGetSize,
@@ -217,6 +218,15 @@ export class SessionManager {
 	/** 列出所有 session */
 	list(): SessionInfo[] {
 		return Array.from(this.sessions.values()).map((s) => this.toInfo(s))
+	}
+
+	/** 获取当前屏幕快照（带 escape 序列）+ 当前 seq */
+	async snapshot(sessionId: string): Promise<{ screen: string; cursor: number } | null> {
+		const session = this.sessions.get(sessionId)
+		if (!session) return null
+		const screen = await tmuxCapturePaneEscape(session.tmuxName)
+		const cursor = session.buffer.getCurrentSeq()
+		return { screen, cursor }
 	}
 
 	/** 销毁 session */

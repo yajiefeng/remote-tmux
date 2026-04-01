@@ -131,6 +131,22 @@ export async function handleSessionsRoute(
 		return
 	}
 
+	// GET /api/sessions/:id/snapshot — 当前屏幕快照（用于 session 切换）
+	if (method === "GET" && pathname.match(/^\/api\/sessions\/[^/]+\/snapshot$/)) {
+		const sessionId = extractSessionId(pathname)
+		if (!sessionId) {
+			json(res, 400, { code: "INVALID_MESSAGE", message: "Missing sessionId" })
+			return
+		}
+		const result = await manager.snapshot(sessionId)
+		if (!result) {
+			json(res, 404, { code: "SESSION_NOT_FOUND", message: "Session not found" })
+			return
+		}
+		json(res, 200, { sessionId, screen: result.screen, cursor: result.cursor })
+		return
+	}
+
 	// GET /api/sessions/:id/history — 历史输出
 	if (method === "GET" && pathname.match(/^\/api\/sessions\/[^/]+\/history$/)) {
 		const sessionId = extractSessionId(pathname)

@@ -121,6 +121,22 @@ export async function tmuxCapturePaneText(name: string): Promise<string> {
 	}
 }
 
+/** 抓取当前屏幕快照（带 escape 序列，用于 session 切换时快速恢复画面） */
+export async function tmuxCapturePaneEscape(name: string): Promise<string> {
+	try {
+		const { stdout } = await exec("tmux", [
+			"capture-pane",
+			"-p",
+			"-e",
+			"-t",
+			`${name}:0.0`,
+		])
+		return stdout
+	} catch {
+		return ""
+	}
+}
+
 /** 启用 pipe-pane，将输出写入文件 */
 export async function tmuxPipePane(name: string, outputPath: string): Promise<void> {
 	// 先关闭已有的 pipe-pane（如果有的话，比如 reattach 场景）

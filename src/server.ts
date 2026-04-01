@@ -511,21 +511,14 @@ export function getClientHtml(): string {
 
     try {
       if (isNewSession) {
-        // Fresh session switch: fetch only the latest chunks (fast)
-        var url = '/api/sessions/' + sid + '/history?latest=1000';
+        // Fresh session switch: use tmux capture-pane snapshot (instant)
+        var url = '/api/sessions/' + sid + '/snapshot';
         var res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + TOKEN } });
-        var h = await res.json();
-        if (h.chunks && h.chunks.length > 0) {
-          // Batch into a single write for fast rendering
-          var batch = '';
-          h.chunks.forEach(function(c) {
-            if (c.seq > lastSeq) {
-              batch += c.data;
-              lastSeq = c.seq;
-            }
-          });
-          if (batch) term.write(batch);
+        var snap = await res.json();
+        if (snap.screen) {
+          term.write(snap.screen);
         }
+        lastSeq = snap.cursor || 0;
       } else {
         // Reconnect: incremental fetch from where we left off
         var hasMore = true;
