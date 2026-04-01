@@ -784,6 +784,7 @@ export function getClientHtml(): string {
   window.addEventListener('resize', debouncedResize);
 
   // --- Soft keyboard adaptation (mobile) ---
+  var settleTimer = null;
   function syncViewportInsets() {
     if (!window.visualViewport) return;
     var vv = window.visualViewport;
@@ -792,6 +793,13 @@ export function getClientHtml(): string {
     if (keyboardInset < 80) keyboardInset = 0;
     sessionPanel.style.paddingBottom = keyboardInset + 'px';
     debouncedResize();
+    // After keyboard animation fully settles, do one final fit+scroll.
+    // Resets on each viewport event so it only fires once, 300ms after
+    // the last event (animation typically takes ~300ms).
+    if (settleTimer) clearTimeout(settleTimer);
+    settleTimer = setTimeout(function() {
+      handleResize();
+    }, 300);
   }
 
   if (window.visualViewport) {
