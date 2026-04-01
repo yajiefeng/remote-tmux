@@ -131,7 +131,14 @@ export async function tmuxCapturePaneEscape(name: string): Promise<string> {
 			"-t",
 			`${name}:0.0`,
 		])
-		return stdout
+		// tmux outputs \n but xterm.js needs \r\n to return cursor to column 0
+		const lines = stdout.split("\n")
+		// 去掉尾部空行
+		while (lines.length > 0 && lines[lines.length - 1]!.trim() === "") {
+			lines.pop()
+		}
+		if (lines.length === 0) return ""
+		return lines.join("\r\n") + "\r\n"
 	} catch {
 		return ""
 	}
