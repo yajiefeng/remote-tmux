@@ -507,16 +507,24 @@ export function getClientHtml(): string {
     }
 
     try {
-      var url = '/api/sessions/' + sid + '/history?after=' + lastSeq + '&limit=1000';
-      var res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + TOKEN } });
-      var h = await res.json();
-      if (h.chunks && h.chunks.length > 0) {
-        h.chunks.forEach(function(c) {
-          if (c.seq > lastSeq) {
-            term.write(c.data);
-            lastSeq = c.seq;
-          }
-        });
+      // Paginated fetch: keep requesting until we have all chunks
+      var hasMore = true;
+      while (hasMore) {
+        var url = '/api/sessions/' + sid + '/history?after=' + lastSeq + '&limit=1000';
+        var res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + TOKEN } });
+        var h = await res.json();
+        if (h.chunks && h.chunks.length > 0) {
+          h.chunks.forEach(function(c) {
+            if (c.seq > lastSeq) {
+              term.write(c.data);
+              lastSeq = c.seq;
+            }
+          });
+          // If we got fewer than limit, we have everything
+          hasMore = (h.chunks.length >= 1000);
+        } else {
+          hasMore = false;
+        }
       }
     } catch (e) {
       console.error('History fetch failed:', e);
