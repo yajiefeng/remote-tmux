@@ -146,10 +146,20 @@ export async function handleSessionsRoute(
 
 		const afterParam = url.searchParams.get("after")
 		const limitParam = url.searchParams.get("limit")
-		const after = afterParam ? parseInt(afterParam, 10) : 0
-		const limit = limitParam ? Math.min(parseInt(limitParam, 10), 1000) : 500
+		const latestParam = url.searchParams.get("latest")
 
-		const chunks = session.buffer.getAfter(after, limit)
+		let chunks
+		if (latestParam) {
+			// Fetch the most recent N chunks (for session switch / initial load)
+			const n = Math.min(parseInt(latestParam, 10) || 5000, 10000)
+			chunks = session.buffer.getLatest(n)
+		} else {
+			// Incremental fetch after a known seq
+			const after = afterParam ? parseInt(afterParam, 10) : 0
+			const limit = limitParam ? Math.min(parseInt(limitParam, 10), 1000) : 500
+			chunks = session.buffer.getAfter(after, limit)
+		}
+
 		json(res, 200, {
 			sessionId,
 			cursor: session.buffer.getCurrentSeq(),

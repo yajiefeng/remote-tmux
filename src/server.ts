@@ -503,23 +503,42 @@ export function getClientHtml(): string {
     }
 
     try {
-      // Paginated fetch: keep requesting until we have all chunks
-      var hasMore = true;
-      while (hasMore) {
-        var url = '/api/sessions/' + sid + '/history?after=' + lastSeq + '&limit=1000';
+      if (isNewSession) {
+        // Fresh session switch: fetch only the latest chunks (fast)
+        var url = '/api/sessions/' + sid + '/history?latest=5000';
         var res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + TOKEN } });
         var h = await res.json();
         if (h.chunks && h.chunks.length > 0) {
+          // Batch into a single write for fast rendering
+          var batch = '';
           h.chunks.forEach(function(c) {
             if (c.seq > lastSeq) {
-              term.write(c.data);
+              batch += c.data;
               lastSeq = c.seq;
             }
           });
-          // If we got fewer than limit, we have everything
-          hasMore = (h.chunks.length >= 1000);
-        } else {
-          hasMore = false;
+          if (batch) term.write(batch);
+        }
+      } else {
+        // Reconnect: incremental fetch from where we left off
+        var hasMore = true;
+        while (hasMore) {
+          var url = '/api/sessions/' + sid + '/history?after=' + lastSeq + '&limit=1000';
+          var res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + TOKEN } });
+          var h = await res.json();
+          if (h.chunks && h.chunks.length > 0) {
+            var batch = '';
+            h.chunks.forEach(function(c) {
+              if (c.seq > lastSeq) {
+                batch += c.data;
+                lastSeq = c.seq;
+              }
+            });
+            if (batch) term.write(batch);
+            hasMore = (h.chunks.length >= 1000);
+          } else {
+            hasMore = false;
+          }
         }
       }
     } catch (e) {
