@@ -50,7 +50,10 @@ export async function startServer(config: Config): Promise<void> {
 		// 静态文件：/ 返回前端页面
 		const url = new URL(req.url ?? "", `http://${req.headers.host ?? "localhost"}`)
 		if (url.pathname === "/" || url.pathname === "/index.html") {
-			res.writeHead(200, { "Content-Type": "text/html" })
+			res.writeHead(200, {
+				"Content-Type": "text/html",
+				"Cache-Control": "private, max-age=3600",
+			})
 			res.end(getClientHtml())
 			return
 		}
@@ -205,6 +208,10 @@ export function getClientHtml(): string {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>WebShell</title>
+<link rel="preload" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js" as="script">
+<link rel="preload" href="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js" as="script">
+<link rel="preload" href="https://cdn.jsdelivr.net/npm/@xterm/addon-unicode11@0.8.0/lib/addon-unicode11.js" as="script">
+<link rel="preload" href="/fonts/MapleMono-NF-CN-Regular.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
 <style>
   @font-face {
