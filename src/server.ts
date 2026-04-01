@@ -792,14 +792,14 @@ export function getClientHtml(): string {
     var keyboardInset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
     if (keyboardInset < 80) keyboardInset = 0;
     sessionPanel.style.paddingBottom = keyboardInset + 'px';
-    debouncedResize();
-    // After keyboard animation fully settles, do one final fit+scroll.
-    // Resets on each viewport event so it only fires once, 300ms after
-    // the last event (animation typically takes ~300ms).
+    // Fit + scroll immediately on every viewport change.
+    // fitAddon.fit() is a no-op when cell dimensions don't change,
+    // so calling it on each animation frame is cheap. This ensures
+    // scrollToBottom() always uses the correct row count.
+    handleResize();
+    // Safety: one final pass after animation fully settles
     if (settleTimer) clearTimeout(settleTimer);
-    settleTimer = setTimeout(function() {
-      handleResize();
-    }, 300);
+    settleTimer = setTimeout(handleResize, 300);
   }
 
   if (window.visualViewport) {
