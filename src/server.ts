@@ -505,7 +505,7 @@ export function getClientHtml(): string {
     try {
       if (isNewSession) {
         // Fresh session switch: fetch only the latest chunks (fast)
-        var url = '/api/sessions/' + sid + '/history?latest=5000';
+        var url = '/api/sessions/' + sid + '/history?latest=1000';
         var res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + TOKEN } });
         var h = await res.json();
         if (h.chunks && h.chunks.length > 0) {
