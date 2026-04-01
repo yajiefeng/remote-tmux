@@ -494,6 +494,10 @@ export function getClientHtml(): string {
     historyLoaded = false;
     pendingOutputs = [];
 
+    // Hide terminal during history replay to avoid flashing top content
+    var tc = document.getElementById('terminal-container');
+    tc.style.visibility = 'hidden';
+
     // Only reset terminal when switching to a different session
     var isNewSession = (sid !== lastLoadedSid);
     if (isNewSession) {
@@ -528,8 +532,9 @@ export function getClientHtml(): string {
     });
     pendingOutputs = [];
 
-    // Always scroll to bottom after history replay
+    // Scroll to bottom then reveal — user sees only the latest content
     term.scrollToBottom();
+    tc.style.visibility = 'visible';
   }
 
   // --- WebSocket ---
