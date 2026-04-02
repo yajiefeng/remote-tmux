@@ -185,23 +185,48 @@ export class SessionManager {
 		// This avoids forwarding raw escape sequences with cursor movements
 		// that xterm.js can't render atomically (no DEC mode 2026 support).
 		let activityDetected = false
-		let captureTimer: ReturnType<typeof setInterval> | null = null
+		let captureTimer: ReturnType<typeof setTimeout> | null = null
 		let lastScreen = ""
-		const CAPTURE_INTERVAL_MS = 50
+		let unchangedFrames = 0
+		const FAST_INTERVAL = 50     // 有活动时 50ms（~20fps）
+		const SLOW_INTERVAL = 200    // 空闲时 200ms（~5fps）
+		const IDLE_THRESHOLD = 3     // 连续 N 帧无变化后切换到慢速
 
 		const captureAndBroadcast = async (): Promise<void> => {
 			if (!activityDetected) return
 			activityDetected = false
 			try {
 				const [screen, pos] = await Promise.all([
-					tmuxCapturePaneEscape(session.tmuxName),
+					tmuxCapturePaneEscape(session.tmuxName, 0),
 					tmuxGetCursorPosition(session.tmuxName),
 				])
-				if (screen === lastScreen) return
+				if (screen === lastScreen) { unchangedFrames++; return }
+				unchangedFrames = 0
+
+				const oldLines = lastScreen.split("\r\n")
+				const newLines = screen.split("\r\n")
 				lastScreen = screen
-				// Full-screen replacement: clear + home + content + cursor position
+
+				// 逐行对比，只发送变化的行（避免 \x1b[2J 全屏清除导致闪烁）
+				const patches: string[] = []
+				const maxLen = Math.max(oldLines.length, newLines.length)
+				for (let i = 0; i < maxLen; i++) {
+					const oldLine = i < oldLines.length ? oldLines[i] : undefined
+					const newLine = i < newLines.length ? newLines[i] : undefined
+
+					if (newLine === undefined) {
+						// 新屏幕更短，清除多余行
+						patches.push(`\x1b[${i + 1};1H\x1b[2K`)
+					} else if (oldLine !== newLine) {
+						// 行内容变化：定位到行首 + 清除该行 + 写新内容
+						patches.push(`\x1b[${i + 1};1H\x1b[2K${newLine}`)
+					}
+				}
+
+				if (patches.length === 0) return
+
 				const cursorSeq = `\x1b[${pos.y + 1};${pos.x + 1}H`
-				const data = "\x1b[2J\x1b[H" + screen + cursorSeq
+				const data = patches.join("") + cursorSeq
 				const seq = session.buffer.append(data)
 				this.broadcast(session, { type: "output", data, seq })
 			} catch {
@@ -211,12 +236,23 @@ export class SessionManager {
 
 		tail.stdout!.on("data", () => {
 			activityDetected = true
+			// 有新活动时重置空闲计数，下次 capture 会用快速间隔
+			unchangedFrames = 0
 		})
 
-		captureTimer = setInterval(() => void captureAndBroadcast(), CAPTURE_INTERVAL_MS)
+		// 自适应频率调度：空闲时降频，有活动时恢复高频
+		function scheduleCapture(): void {
+			const interval = unchangedFrames >= IDLE_THRESHOLD ? SLOW_INTERVAL : FAST_INTERVAL
+			captureTimer = setTimeout(() => {
+				void captureAndBroadcast().finally(() => {
+					if (session.tailProcess) scheduleCapture()
+				})
+			}, interval)
+		}
+		scheduleCapture()
 
 		tail.on("exit", () => {
-			if (captureTimer) clearInterval(captureTimer)
+			if (captureTimer) clearTimeout(captureTimer)
 			console.log(`[session ${session.sessionId}] tail process exited`)
 		})
 

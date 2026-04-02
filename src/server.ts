@@ -378,6 +378,33 @@ export function getClientHtml(): string {
   let pendingOutputs = [];     // buffer realtime outputs during history fetch
   const MAX_RECONNECT = 10;
 
+  // --- 滚动状态跟踪 ---
+  let userScrolling = false;
+  let scrollResumeTimer = null;
+  const SCROLL_RESUME_DELAY = 3000; // 停止滚动 3 秒后恢复跟随
+
+  function isAtBottom() {
+    var buf = term.buffer.active;
+    return buf.viewportY >= buf.baseY;
+  }
+
+  term.onScroll(function() {
+    if (!isAtBottom()) {
+      userScrolling = true;
+      if (scrollResumeTimer) clearTimeout(scrollResumeTimer);
+      scrollResumeTimer = setTimeout(function() {
+        userScrolling = false;
+        term.scrollToBottom();
+      }, SCROLL_RESUME_DELAY);
+    } else {
+      userScrolling = false;
+      if (scrollResumeTimer) {
+        clearTimeout(scrollResumeTimer);
+        scrollResumeTimer = null;
+      }
+    }
+  });
+
   function setStatus(state, text) {
     dot.className = 'dot ' + state;
     statusText.textContent = text;
@@ -560,7 +587,7 @@ export function getClientHtml(): string {
     pendingOutputs = [];
 
     // Scroll to bottom then reveal — user sees only the latest content
-    term.scrollToBottom();
+    if (!userScrolling) term.scrollToBottom();
     tc.style.visibility = 'visible';
     term.focus();
   }
@@ -802,8 +829,8 @@ export function getClientHtml(): string {
         ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
       }
     }
-    // Always keep viewport at bottom after resize
-    term.scrollToBottom();
+    // Keep viewport at bottom after resize (unless user is browsing history)
+    if (!userScrolling) term.scrollToBottom();
   }
 
   function debouncedResize() {
