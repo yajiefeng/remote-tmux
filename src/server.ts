@@ -364,8 +364,7 @@ export function getClientHtml(): string {
         // If inertia brought us back to bottom, stop and resume following
         if (isAtBottom()) {
           inertiaId = null;
-          userScrolledUp = false;
-          scrollIndicator.style.display = 'none';
+          resumeFollowing();
           return;
         }
         inertiaId = requestAnimationFrame(step);
@@ -431,9 +430,7 @@ export function getClientHtml(): string {
       if (!didScroll) {
         // Tap (no swipe) while scrolled up → back to bottom to type
         if (userScrolledUp) {
-          userScrolledUp = false;
-          term.scrollToBottom();
-          scrollIndicator.style.display = 'none';
+          resumeFollowing();
         }
         return;
       }
@@ -481,10 +478,19 @@ export function getClientHtml(): string {
     'cursor:pointer;backdrop-filter:blur(4px);transition:opacity 0.2s;';
   document.body.appendChild(scrollIndicator);
 
-  scrollIndicator.addEventListener('click', function() {
+  function resumeFollowing() {
     userScrolledUp = false;
-    term.scrollToBottom();
     scrollIndicator.style.display = 'none';
+    // Write the last skipped frame so screen is up-to-date immediately
+    if (lastSkippedData) {
+      term.write(lastSkippedData);
+      lastSkippedData = null;
+    }
+    term.scrollToBottom();
+  }
+
+  scrollIndicator.addEventListener('click', function() {
+    resumeFollowing();
     term.focus();
   });
 
@@ -503,6 +509,7 @@ export function getClientHtml(): string {
   const statusText = document.getElementById('status-text');
   let ws = null;
   let lastSeq = 0;
+  let lastSkippedData = null;  // last frame skipped while userScrolledUp
   let reconnectAttempts = 0;
   let currentSid = null;       // remember session across reconnects
   let historyLoaded = false;   // gate: don't render realtime until history is done
@@ -736,8 +743,16 @@ export function getClientHtml(): string {
             pendingOutputs.push(msg);
           } else {
             if (msg.seq > lastSeq) {
-              term.write(msg.data);
               lastSeq = msg.seq;
+              // Skip heavy term.write() while user is viewing history.
+              // Each frame is a full-screen overwrite, so the next frame
+              // after scrolling back to bottom will restore correct content.
+              if (!userScrolledUp) {
+                term.write(msg.data);
+                lastSkippedData = null;
+              } else {
+                lastSkippedData = msg.data;
+              }
               smartScrollToBottom();
             }
           }
