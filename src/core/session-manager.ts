@@ -199,9 +199,11 @@ export class SessionManager {
 				])
 				if (screen === lastScreen) return
 				lastScreen = screen
-				// Full-screen replacement: clear + home + content + cursor position
+				// Overwrite from (1,1) without clearing — eliminates flicker.
+				// \x1b[H  = cursor home (1,1)
+				// \x1b[J  = erase from cursor to end of screen (clean up shorter frames)
 				const cursorSeq = `\x1b[${pos.y + 1};${pos.x + 1}H`
-				const data = "\x1b[2J\x1b[H" + screen + cursorSeq
+				const data = "\x1b[H" + screen + "\x1b[J" + cursorSeq
 				const seq = session.buffer.append(data)
 				this.broadcast(session, { type: "output", data, seq })
 			} catch {
