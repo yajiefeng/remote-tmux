@@ -185,19 +185,35 @@ export class SessionManager {
 		// This avoids forwarding raw escape sequences with cursor movements
 		// that xterm.js can't render atomically (no DEC mode 2026 support).
 		let activityDetected = false
-		let captureTimer: ReturnType<typeof setInterval> | null = null
+		let captureTimer: ReturnType<typeof setTimeout> | null = null
 		let lastScreen = ""
-		const CAPTURE_INTERVAL_MS = 50
+		let unchangedFrames = 0
+		const INTERVAL_ACTIVE = 50
+		const INTERVAL_IDLE = 200
+		const IDLE_THRESHOLD = 3
+
+		const scheduleNext = (): void => {
+			const interval = unchangedFrames >= IDLE_THRESHOLD ? INTERVAL_IDLE : INTERVAL_ACTIVE
+			captureTimer = setTimeout(() => void captureAndBroadcast(), interval)
+		}
 
 		const captureAndBroadcast = async (): Promise<void> => {
-			if (!activityDetected) return
+			if (!activityDetected) {
+				scheduleNext()
+				return
+			}
 			activityDetected = false
 			try {
 				const [screen, pos] = await Promise.all([
 					tmuxCapturePaneEscape(session.tmuxName),
 					tmuxGetCursorPosition(session.tmuxName),
 				])
-				if (screen === lastScreen) return
+				if (screen === lastScreen) {
+					unchangedFrames++
+					scheduleNext()
+					return
+				}
+				unchangedFrames = 0
 				lastScreen = screen
 				// Overwrite from (1,1) without clearing — eliminates flicker.
 				// \x1b[H  = cursor home (1,1)
@@ -209,16 +225,23 @@ export class SessionManager {
 			} catch {
 				// tmux pane might be gone
 			}
+			scheduleNext()
 		}
 
 		tail.stdout!.on("data", () => {
 			activityDetected = true
+			// Wake up immediately from idle interval
+			if (unchangedFrames >= IDLE_THRESHOLD && captureTimer) {
+				clearTimeout(captureTimer)
+				unchangedFrames = 0
+				captureTimer = setTimeout(() => void captureAndBroadcast(), INTERVAL_ACTIVE)
+			}
 		})
 
-		captureTimer = setInterval(() => void captureAndBroadcast(), CAPTURE_INTERVAL_MS)
+		scheduleNext()
 
 		tail.on("exit", () => {
-			if (captureTimer) clearInterval(captureTimer)
+			if (captureTimer) clearTimeout(captureTimer)
 			console.log(`[session ${session.sessionId}] tail process exited`)
 		})
 
