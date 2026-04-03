@@ -319,45 +319,96 @@ export function getClientHtml(): string {
   term.unicode.activeVersion = '11';
   term.open(document.getElementById('terminal-container'));
 
-  // --- 移动端触摸滚动加速 ---
+  // --- 移动端触摸滚动（带惯性） ---
   (function() {
     var container = document.querySelector('#terminal-container .xterm-screen');
     if (!container) return;
-    var SCROLL_MULTIPLIER = 6;
-    var DEAD_ZONE = 8; // px — ignore movement smaller than this (tap tolerance)
+
+    var LINE_HEIGHT = 15;
+    var SCROLL_MULTIPLIER = 3;
+    var DEAD_ZONE = 8;
+    var FRICTION = 0.92;
+    var MIN_VELOCITY = 0.5;
+    var VELOCITY_WINDOW = 80;
+    var MAX_INERTIA_LINES = 8;
+
     var startY = 0;
     var lastTouchY = 0;
     var scrolling = false;
     var didScroll = false;
+    var touchHistory = [];
+    var inertiaId = null;
+    var inertiaVelocity = 0;
+
+    function stopInertia() {
+      if (inertiaId !== null) {
+        cancelAnimationFrame(inertiaId);
+        inertiaId = null;
+      }
+      inertiaVelocity = 0;
+    }
+
+    function startInertia(velocity) {
+      stopInertia();
+      inertiaVelocity = velocity;
+      function step() {
+        inertiaVelocity *= FRICTION;
+        if (Math.abs(inertiaVelocity) < MIN_VELOCITY) { inertiaId = null; return; }
+        var lines = Math.round(Math.min(Math.abs(inertiaVelocity), MAX_INERTIA_LINES)
+                               * (inertiaVelocity > 0 ? 1 : -1));
+        if (lines !== 0) term.scrollLines(lines);
+        inertiaId = requestAnimationFrame(step);
+      }
+      inertiaId = requestAnimationFrame(step);
+    }
+
+    function computeReleaseVelocity() {
+      var now = Date.now();
+      var recent = touchHistory.filter(function(p) { return now - p.t < VELOCITY_WINDOW; });
+      if (recent.length < 2) return 0;
+      var first = recent[0];
+      var last = recent[recent.length - 1];
+      var dt = last.t - first.t;
+      if (dt === 0) return 0;
+      var dy = first.y - last.y;
+      return (dy / dt * 16.67) / LINE_HEIGHT * SCROLL_MULTIPLIER;
+    }
 
     container.addEventListener('touchstart', function(e) {
-      if (e.touches.length === 1) {
-        startY = e.touches[0].clientY;
-        lastTouchY = startY;
-        scrolling = true;
-        didScroll = false;
-      }
+      if (e.touches.length !== 1) return;
+      stopInertia();
+      startY = e.touches[0].clientY;
+      lastTouchY = startY;
+      scrolling = true;
+      didScroll = false;
+      touchHistory = [{ y: startY, t: Date.now() }];
     }, { passive: true });
 
     container.addEventListener('touchmove', function(e) {
       if (!scrolling || e.touches.length !== 1) return;
       var currentY = e.touches[0].clientY;
-
-      // Don't start scrolling until finger moves past dead zone
       if (!didScroll && Math.abs(currentY - startY) < DEAD_ZONE) return;
       didScroll = true;
-
       var delta = lastTouchY - currentY;
       lastTouchY = currentY;
-
-      var lines = Math.round(delta / 15 * SCROLL_MULTIPLIER);
-      if (lines !== 0) {
-        term.scrollLines(lines);
-      }
+      touchHistory.push({ y: currentY, t: Date.now() });
+      if (touchHistory.length > 10) touchHistory = touchHistory.slice(-10);
+      var lines = Math.round(delta / LINE_HEIGHT * SCROLL_MULTIPLIER);
+      if (lines !== 0) term.scrollLines(lines);
     }, { passive: true });
 
     container.addEventListener('touchend', function() {
+      if (!scrolling) return;
       scrolling = false;
+      if (!didScroll) return;
+      var velocity = computeReleaseVelocity();
+      if (Math.abs(velocity) > MIN_VELOCITY) startInertia(velocity);
+      touchHistory = [];
+    }, { passive: true });
+
+    container.addEventListener('touchcancel', function() {
+      scrolling = false;
+      touchHistory = [];
     }, { passive: true });
   })();
 
@@ -365,6 +416,43 @@ export function getClientHtml(): string {
   document.fonts.ready.then(function() {
     fitAddon.fit();
   });
+
+  // --- Sticky Scroll ---
+  var userScrolledUp = false;
+
+  function isAtBottom() {
+    var buf = term.buffer.active;
+    return buf.viewportY >= buf.baseY - 1;
+  }
+
+  term.onScroll(function() {
+    userScrolledUp = !isAtBottom();
+    scrollIndicator.style.display = userScrolledUp ? 'block' : 'none';
+  });
+
+  var scrollIndicator = document.createElement('div');
+  scrollIndicator.textContent = '\u2193 New output';
+  scrollIndicator.style.cssText = 'display:none;position:fixed;bottom:60px;left:50%;' +
+    'transform:translateX(-50%);background:rgba(76,175,80,0.9);color:#fff;' +
+    'padding:6px 16px;border-radius:16px;font-size:13px;z-index:50;' +
+    'cursor:pointer;backdrop-filter:blur(4px);transition:opacity 0.2s;';
+  document.body.appendChild(scrollIndicator);
+
+  scrollIndicator.addEventListener('click', function() {
+    userScrolledUp = false;
+    term.scrollToBottom();
+    scrollIndicator.style.display = 'none';
+    term.focus();
+  });
+
+  function smartScrollToBottom() {
+    if (userScrolledUp) {
+      scrollIndicator.style.display = 'block';
+      return;
+    }
+    scrollIndicator.style.display = 'none';
+    term.scrollToBottom();
+  }
 
   // --- State ---
   const dot = document.getElementById('dot');
@@ -560,6 +648,8 @@ export function getClientHtml(): string {
     pendingOutputs = [];
 
     // Scroll to bottom then reveal — user sees only the latest content
+    userScrolledUp = false;
+    scrollIndicator.style.display = 'none';
     term.scrollToBottom();
     tc.style.visibility = 'visible';
     term.focus();
@@ -605,6 +695,7 @@ export function getClientHtml(): string {
             if (msg.seq > lastSeq) {
               term.write(msg.data);
               lastSeq = msg.seq;
+              smartScrollToBottom();
             }
           }
           break;
@@ -806,8 +897,8 @@ export function getClientHtml(): string {
         ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
       }
     }
-    // Always keep viewport at bottom after resize
-    term.scrollToBottom();
+    // Keep viewport at bottom after resize (unless user scrolled up)
+    smartScrollToBottom();
   }
 
   function debouncedResize() {
