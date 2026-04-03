@@ -353,10 +353,21 @@ export function getClientHtml(): string {
       inertiaVelocity = velocity;
       function step() {
         inertiaVelocity *= FRICTION;
-        if (Math.abs(inertiaVelocity) < MIN_VELOCITY) { inertiaId = null; return; }
+        if (Math.abs(inertiaVelocity) < MIN_VELOCITY) {
+          inertiaId = null;
+          updateScrollState();
+          return;
+        }
         var lines = Math.round(Math.min(Math.abs(inertiaVelocity), MAX_INERTIA_LINES)
                                * (inertiaVelocity > 0 ? 1 : -1));
         if (lines !== 0) term.scrollLines(lines);
+        // If inertia brought us back to bottom, stop and resume following
+        if (isAtBottom()) {
+          inertiaId = null;
+          userScrolledUp = false;
+          scrollIndicator.style.display = 'none';
+          return;
+        }
         inertiaId = requestAnimationFrame(step);
       }
       inertiaId = requestAnimationFrame(step);
@@ -394,7 +405,10 @@ export function getClientHtml(): string {
       touchHistory.push({ y: currentY, t: Date.now() });
       if (touchHistory.length > 10) touchHistory = touchHistory.slice(-10);
       var lines = Math.round(delta / LINE_HEIGHT * SCROLL_MULTIPLIER);
-      if (lines !== 0) term.scrollLines(lines);
+      if (lines !== 0) {
+        term.scrollLines(lines);
+        updateScrollState();
+      }
     }, { passive: true });
 
     container.addEventListener('touchend', function() {
@@ -410,7 +424,11 @@ export function getClientHtml(): string {
         return;
       }
       var velocity = computeReleaseVelocity();
-      if (Math.abs(velocity) > MIN_VELOCITY) startInertia(velocity);
+      if (Math.abs(velocity) > MIN_VELOCITY) {
+        startInertia(velocity);
+      } else {
+        updateScrollState();
+      }
       touchHistory = [];
     }, { passive: true });
 
@@ -426,6 +444,9 @@ export function getClientHtml(): string {
   });
 
   // --- Sticky Scroll ---
+  // IMPORTANT: userScrolledUp is controlled ONLY by touch gestures,
+  // never by term.onScroll. term.write() triggers scroll events during
+  // its async 540-line write, which would race and flip the flag back.
   var userScrolledUp = false;
 
   function isAtBottom() {
@@ -433,10 +454,10 @@ export function getClientHtml(): string {
     return buf.viewportY >= buf.baseY - 1;
   }
 
-  term.onScroll(function() {
+  function updateScrollState() {
     userScrolledUp = !isAtBottom();
     scrollIndicator.style.display = userScrolledUp ? 'block' : 'none';
-  });
+  }
 
   var scrollIndicator = document.createElement('div');
   scrollIndicator.textContent = '\u2193 New output';
