@@ -137,6 +137,61 @@ describe("ImeDedupe", () => {
 		expect(dedupe.shouldSendFallback(id!)).toBe(false)
 	})
 
+	// --- ASCII chars swallowed by CJK IME ---
+
+	it("returns true for space, slash, hyphen", () => {
+		expect(ImeDedupe.needsFallback(" ")).toBe(true)
+		expect(ImeDedupe.needsFallback("/")).toBe(true)
+		expect(ImeDedupe.needsFallback("-")).toBe(true)
+	})
+
+	it("returns true for #, @, _, \\, ^", () => {
+		expect(ImeDedupe.needsFallback("#")).toBe(true)
+		expect(ImeDedupe.needsFallback("@")).toBe(true)
+		expect(ImeDedupe.needsFallback("_")).toBe(true)
+		expect(ImeDedupe.needsFallback("\\")).toBe(true)
+		expect(ImeDedupe.needsFallback("^")).toBe(true)
+	})
+
+	it("returns true for other ASCII punctuation (!~|=+)", () => {
+		expect(ImeDedupe.needsFallback("!")).toBe(true)
+		expect(ImeDedupe.needsFallback("~")).toBe(true)
+		expect(ImeDedupe.needsFallback("|")).toBe(true)
+		expect(ImeDedupe.needsFallback("=")).toBe(true)
+		expect(ImeDedupe.needsFallback("+")).toBe(true)
+	})
+
+	it("returns true for currency symbols (¥ € £)", () => {
+		expect(ImeDedupe.needsFallback("\u00A5")).toBe(true) // ¥
+		expect(ImeDedupe.needsFallback("\u20AC")).toBe(true) // €
+		expect(ImeDedupe.needsFallback("\u00A3")).toBe(true) // £
+	})
+
+	it("space: input without onData sends fallback", () => {
+		const id = dedupe.onInput(" ")
+		expect(id).not.toBeNull()
+		expect(dedupe.shouldSendFallback(id!)).toBe(true)
+	})
+
+	it("slash: input without onData sends fallback", () => {
+		const id = dedupe.onInput("/")
+		expect(id).not.toBeNull()
+		expect(dedupe.shouldSendFallback(id!)).toBe(true)
+	})
+
+	it("hyphen: input without onData sends fallback", () => {
+		const id = dedupe.onInput("-")
+		expect(id).not.toBeNull()
+		expect(dedupe.shouldSendFallback(id!)).toBe(true)
+	})
+
+	it("space: onData before input deduplicates", () => {
+		dedupe.onData(" ")
+		const id = dedupe.onInput(" ")
+		expect(id).not.toBeNull()
+		expect(dedupe.shouldSendFallback(id!)).toBe(false)
+	})
+
 	// --- non-CJK-punctuation skipped ---
 
 	it("returns null for non-CJK-punctuation input (Han chars)", () => {

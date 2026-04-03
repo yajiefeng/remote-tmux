@@ -11,13 +11,18 @@
  *   2. input before onData → stored in pending map, onData matches against it
  */
 
-// Characters that may need IME fallback:
-//   0-9:       Digits (swallowed by some mobile CJK IMEs)
-//   U+2010-2044: General Punctuation (dashes, quotes, ellipsis, primes...)
-//   U+3000-303F: CJK Symbols and Punctuation
-//   U+FF00-FFEF: Halfwidth and Fullwidth Forms
-// Excludes Han/Kana/Hangul to avoid duplicating normal character input.
-const IME_FALLBACK_RE = /[0-9\u2010-\u2044\u3000-\u303F\uFF00-\uFFEF]/
+// Characters that may need IME fallback: anything that is NOT an ASCII
+// letter and NOT a CJK ideograph / kana / hangul.  CJK IMEs may swallow
+// punctuation, digits, symbols (¥ € etc.) without firing onData.
+// The deduplication logic prevents double-sending when onData does fire.
+// Excluded (handled normally by composition / onData):
+//   a-z A-Z        ASCII letters
+//   U+3040-309F    Hiragana
+//   U+30A0-30FF    Katakana
+//   U+4E00-9FFF    CJK Unified Ideographs
+//   U+3400-4DBF    CJK Unified Ideographs Extension A
+//   U+AC00-D7AF    Hangul Syllables
+const IME_FALLBACK_RE = /[^a-zA-Z\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\u3400-\u4DBF\uAC00-\uD7AF]/
 
 /** Test if a single character matches the fallback set */
 function isFallbackChar(ch: string): boolean {

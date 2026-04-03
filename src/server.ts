@@ -698,7 +698,7 @@ export function getClientHtml(): string {
   var imeRecentChars = [];
   var imeNextId = 1;
   var IME_RECENT_TTL = 500;
-  var IME_FALLBACK_RE = /[0-9\\u2010-\\u2044\\u3000-\\u303F\\uFF00-\\uFFEF]/;
+  var IME_FALLBACK_RE = /[^a-zA-Z\\u3040-\\u309F\\u30A0-\\u30FF\\u4E00-\\u9FFF\\u3400-\\u4DBF\\uAC00-\\uD7AF]/;
 
   function isFallbackChar(ch) {
     return IME_FALLBACK_RE.test(ch);
@@ -775,6 +775,10 @@ export function getClientHtml(): string {
     if (!xtermTextarea) return;
 
     xtermTextarea.addEventListener('input', function(e) {
+      // During IME composition (e.g. pinyin → 汉字), skip fallback.
+      // Space/punctuation pressed to select a candidate should NOT
+      // be sent as literal characters.
+      if (e.isComposing) return;
       var data = e.data;
       var id = imeOnInput(data);
       if (id === null) return;
