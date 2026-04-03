@@ -325,12 +325,12 @@ export function getClientHtml(): string {
     if (!container) return;
 
     var LINE_HEIGHT = 15;
-    var SCROLL_MULTIPLIER = 3;
+    var SCROLL_MULTIPLIER = 5;
     var DEAD_ZONE = 8;
-    var FRICTION = 0.92;
-    var MIN_VELOCITY = 0.5;
-    var VELOCITY_WINDOW = 80;
-    var MAX_INERTIA_LINES = 8;
+    var FRICTION = 0.97;
+    var MIN_VELOCITY = 0.3;
+    var VELOCITY_WINDOW = 100;
+    var MAX_INERTIA_LINES = 12;
 
     var startY = 0;
     var lastTouchY = 0;
@@ -394,18 +394,6 @@ export function getClientHtml(): string {
       touchHistory = [{ y: startY, t: Date.now() }];
     }, { passive: true });
 
-    var pendingScrollLines = 0;
-    var scrollRafId = null;
-
-    function flushScroll() {
-      scrollRafId = null;
-      if (pendingScrollLines !== 0) {
-        term.scrollLines(pendingScrollLines);
-        pendingScrollLines = 0;
-        updateScrollState();
-      }
-    }
-
     container.addEventListener('touchmove', function(e) {
       if (!scrolling || e.touches.length !== 1) return;
       var currentY = e.touches[0].clientY;
@@ -417,10 +405,8 @@ export function getClientHtml(): string {
       if (touchHistory.length > 10) touchHistory = touchHistory.slice(-10);
       var lines = Math.round(delta / LINE_HEIGHT * SCROLL_MULTIPLIER);
       if (lines !== 0) {
-        pendingScrollLines += lines;
-        if (scrollRafId === null) {
-          scrollRafId = requestAnimationFrame(flushScroll);
-        }
+        term.scrollLines(lines);
+        updateScrollState();
       }
     }, { passive: true });
 
