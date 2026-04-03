@@ -395,6 +395,18 @@ export function getClientHtml(): string {
       touchHistory = [{ y: startY, t: Date.now() }];
     }, { passive: true });
 
+    var pendingScrollLines = 0;
+    var scrollRafId = null;
+
+    function flushScroll() {
+      scrollRafId = null;
+      if (pendingScrollLines !== 0) {
+        term.scrollLines(pendingScrollLines);
+        pendingScrollLines = 0;
+        updateScrollState();
+      }
+    }
+
     container.addEventListener('touchmove', function(e) {
       if (!scrolling || e.touches.length !== 1) return;
       var currentY = e.touches[0].clientY;
@@ -406,8 +418,10 @@ export function getClientHtml(): string {
       if (touchHistory.length > 10) touchHistory = touchHistory.slice(-10);
       var lines = Math.round(delta / LINE_HEIGHT * SCROLL_MULTIPLIER);
       if (lines !== 0) {
-        term.scrollLines(lines);
-        updateScrollState();
+        pendingScrollLines += lines;
+        if (scrollRafId === null) {
+          scrollRafId = requestAnimationFrame(flushScroll);
+        }
       }
     }, { passive: true });
 
