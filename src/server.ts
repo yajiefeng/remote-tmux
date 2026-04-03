@@ -319,45 +319,119 @@ export function getClientHtml(): string {
   term.unicode.activeVersion = '11';
   term.open(document.getElementById('terminal-container'));
 
-  // --- 移动端触摸滚动加速 ---
+  // --- 移动端触摸滚动（带惯性） ---
   (function() {
     var container = document.querySelector('#terminal-container .xterm-screen');
     if (!container) return;
-    var SCROLL_MULTIPLIER = 6;
-    var DEAD_ZONE = 8; // px — ignore movement smaller than this (tap tolerance)
+
+    var LINE_HEIGHT = 15;
+    var SCROLL_MULTIPLIER = 5;
+    var DEAD_ZONE = 8;
+    var FRICTION = 0.97;
+    var MIN_VELOCITY = 0.3;
+    var VELOCITY_WINDOW = 100;
+    var MAX_INERTIA_LINES = 12;
+
     var startY = 0;
     var lastTouchY = 0;
     var scrolling = false;
     var didScroll = false;
+    var touchHistory = [];
+    var inertiaId = null;
+    var inertiaVelocity = 0;
+
+    function stopInertia() {
+      if (inertiaId !== null) {
+        cancelAnimationFrame(inertiaId);
+        inertiaId = null;
+      }
+      inertiaVelocity = 0;
+    }
+
+    function startInertia(velocity) {
+      stopInertia();
+      inertiaVelocity = velocity;
+      function step() {
+        inertiaVelocity *= FRICTION;
+        if (Math.abs(inertiaVelocity) < MIN_VELOCITY) {
+          inertiaId = null;
+          updateScrollState();
+          return;
+        }
+        var lines = Math.round(Math.min(Math.abs(inertiaVelocity), MAX_INERTIA_LINES)
+                               * (inertiaVelocity > 0 ? 1 : -1));
+        if (lines !== 0) term.scrollLines(lines);
+        // If inertia brought us back to bottom, stop and resume following
+        if (isAtBottom()) {
+          inertiaId = null;
+          resumeFollowing();
+          return;
+        }
+        inertiaId = requestAnimationFrame(step);
+      }
+      inertiaId = requestAnimationFrame(step);
+    }
+
+    function computeReleaseVelocity() {
+      var now = Date.now();
+      var recent = touchHistory.filter(function(p) { return now - p.t < VELOCITY_WINDOW; });
+      if (recent.length < 2) return 0;
+      var first = recent[0];
+      var last = recent[recent.length - 1];
+      var dt = last.t - first.t;
+      if (dt === 0) return 0;
+      var dy = first.y - last.y;
+      return (dy / dt * 16.67) / LINE_HEIGHT * SCROLL_MULTIPLIER;
+    }
 
     container.addEventListener('touchstart', function(e) {
-      if (e.touches.length === 1) {
-        startY = e.touches[0].clientY;
-        lastTouchY = startY;
-        scrolling = true;
-        didScroll = false;
-      }
+      if (e.touches.length !== 1) return;
+      stopInertia();
+      startY = e.touches[0].clientY;
+      lastTouchY = startY;
+      scrolling = true;
+      didScroll = false;
+      touchHistory = [{ y: startY, t: Date.now() }];
     }, { passive: true });
 
     container.addEventListener('touchmove', function(e) {
       if (!scrolling || e.touches.length !== 1) return;
       var currentY = e.touches[0].clientY;
-
-      // Don't start scrolling until finger moves past dead zone
       if (!didScroll && Math.abs(currentY - startY) < DEAD_ZONE) return;
       didScroll = true;
-
       var delta = lastTouchY - currentY;
       lastTouchY = currentY;
-
-      var lines = Math.round(delta / 15 * SCROLL_MULTIPLIER);
+      touchHistory.push({ y: currentY, t: Date.now() });
+      if (touchHistory.length > 10) touchHistory = touchHistory.slice(-10);
+      var lines = Math.round(delta / LINE_HEIGHT * SCROLL_MULTIPLIER);
       if (lines !== 0) {
         term.scrollLines(lines);
+        updateScrollState();
       }
     }, { passive: true });
 
     container.addEventListener('touchend', function() {
+      if (!scrolling) return;
       scrolling = false;
+      if (!didScroll) {
+        // Tap (no swipe) while scrolled up → back to bottom to type
+        if (userScrolledUp) {
+          resumeFollowing();
+        }
+        return;
+      }
+      var velocity = computeReleaseVelocity();
+      if (Math.abs(velocity) > MIN_VELOCITY) {
+        startInertia(velocity);
+      } else {
+        updateScrollState();
+      }
+      touchHistory = [];
+    }, { passive: true });
+
+    container.addEventListener('touchcancel', function() {
+      scrolling = false;
+      touchHistory = [];
     }, { passive: true });
   })();
 
@@ -366,12 +440,62 @@ export function getClientHtml(): string {
     fitAddon.fit();
   });
 
+  // --- Sticky Scroll ---
+  // IMPORTANT: userScrolledUp is controlled ONLY by touch gestures,
+  // never by term.onScroll. term.write() triggers scroll events during
+  // its async 540-line write, which would race and flip the flag back.
+  var userScrolledUp = false;
+
+  function isAtBottom() {
+    var buf = term.buffer.active;
+    return buf.viewportY >= buf.baseY - 1;
+  }
+
+  function updateScrollState() {
+    userScrolledUp = !isAtBottom();
+    scrollIndicator.style.display = userScrolledUp ? 'block' : 'none';
+  }
+
+  var scrollIndicator = document.createElement('div');
+  scrollIndicator.textContent = '\u2193 New output';
+  scrollIndicator.style.cssText = 'display:none;position:fixed;bottom:60px;left:50%;' +
+    'transform:translateX(-50%);background:rgba(76,175,80,0.9);color:#fff;' +
+    'padding:6px 16px;border-radius:16px;font-size:13px;z-index:50;' +
+    'cursor:pointer;backdrop-filter:blur(4px);transition:opacity 0.2s;';
+  document.body.appendChild(scrollIndicator);
+
+  function resumeFollowing() {
+    userScrolledUp = false;
+    scrollIndicator.style.display = 'none';
+    // Write the last skipped frame so screen is up-to-date immediately
+    if (lastSkippedData) {
+      term.write(lastSkippedData);
+      lastSkippedData = null;
+    }
+    term.scrollToBottom();
+  }
+
+  scrollIndicator.addEventListener('click', function() {
+    resumeFollowing();
+    term.focus();
+  });
+
+  function smartScrollToBottom() {
+    if (userScrolledUp) {
+      scrollIndicator.style.display = 'block';
+      return;
+    }
+    scrollIndicator.style.display = 'none';
+    term.scrollToBottom();
+  }
+
   // --- State ---
   const dot = document.getElementById('dot');
   const sessionName = document.getElementById('session-name');
   const statusText = document.getElementById('status-text');
   let ws = null;
   let lastSeq = 0;
+  let lastSkippedData = null;  // last frame skipped while userScrolledUp
   let reconnectAttempts = 0;
   let currentSid = null;       // remember session across reconnects
   let historyLoaded = false;   // gate: don't render realtime until history is done
@@ -560,6 +684,8 @@ export function getClientHtml(): string {
     pendingOutputs = [];
 
     // Scroll to bottom then reveal — user sees only the latest content
+    userScrolledUp = false;
+    scrollIndicator.style.display = 'none';
     term.scrollToBottom();
     tc.style.visibility = 'visible';
     term.focus();
@@ -603,8 +729,17 @@ export function getClientHtml(): string {
             pendingOutputs.push(msg);
           } else {
             if (msg.seq > lastSeq) {
-              term.write(msg.data);
               lastSeq = msg.seq;
+              // Skip heavy term.write() while user is viewing history.
+              // Each frame is a full-screen overwrite, so the next frame
+              // after scrolling back to bottom will restore correct content.
+              if (!userScrolledUp) {
+                term.write(msg.data);
+                lastSkippedData = null;
+              } else {
+                lastSkippedData = msg.data;
+              }
+              smartScrollToBottom();
             }
           }
           break;
@@ -806,8 +941,8 @@ export function getClientHtml(): string {
         ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
       }
     }
-    // Always keep viewport at bottom after resize
-    term.scrollToBottom();
+    // Keep viewport at bottom after resize (unless user scrolled up)
+    smartScrollToBottom();
   }
 
   function debouncedResize() {

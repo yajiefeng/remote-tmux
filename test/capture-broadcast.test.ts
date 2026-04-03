@@ -118,11 +118,13 @@ describe("captureAndBroadcast", () => {
 		const msg = JSON.parse(ws.send.mock.calls[0][0])
 		expect(msg.type).toBe("output")
 		// Must start with clear screen + home
-		expect(msg.data).toMatch(/^\x1b\[2J\x1b\[H/)
+		expect(msg.data).toMatch(/^\x1b\[H/)
+		// Must NOT contain clear-screen (causes flicker)
+		expect(msg.data).not.toContain("\x1b[2J")
 		// Must contain the screen content
 		expect(msg.data).toContain(screen)
-		// Must end with cursor position (row 3, col 6)
-		expect(msg.data).toContain("\x1b[3;6H")
+		// Must have erase-to-end after screen, then cursor position
+		expect(msg.data).toMatch(/line3\x1b\[J\x1b\[3;6H$/)
 	})
 
 	it("does not broadcast when screen is unchanged", async () => {
