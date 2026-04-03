@@ -400,7 +400,15 @@ export function getClientHtml(): string {
     container.addEventListener('touchend', function() {
       if (!scrolling) return;
       scrolling = false;
-      if (!didScroll) return;
+      if (!didScroll) {
+        // Tap (no swipe) while scrolled up → back to bottom to type
+        if (userScrolledUp) {
+          userScrolledUp = false;
+          term.scrollToBottom();
+          scrollIndicator.style.display = 'none';
+        }
+        return;
+      }
       var velocity = computeReleaseVelocity();
       if (Math.abs(velocity) > MIN_VELOCITY) startInertia(velocity);
       touchHistory = [];
