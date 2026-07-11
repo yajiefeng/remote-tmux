@@ -33,8 +33,8 @@ tailscale ip -4
 ### 3. 启动 WebShell
 
 ```bash
-cd packages/webshell
-WEBSHELL_TOKEN=your_secret_token npx tsx src/cli.ts
+cd remote-tmux
+WEBSHELL_HOST=0.0.0.0 WEBSHELL_TOKEN=your_secret_token npx tsx src/cli.ts
 ```
 
 ### 4. 手机访问
@@ -51,7 +51,8 @@ http://100.x.y.z:3000?token=your_secret_token
 
 - Tailscale 隧道已加密（WireGuard），HTTP 即可，不需要 HTTPS
 - Token 在 URL query 中传输，但因为是加密隧道，不会被中间人截获
-- 不要将 WebShell 端口暴露到公网（`0.0.0.0` 监听没问题，因为公网无法路由到 Tailscale IP）
+- 默认只监听 `127.0.0.1`；Tailscale 访问需要显式设置 `WEBSHELL_HOST=0.0.0.0` 或绑定到 Tailscale IP
+- 不要将 WebShell 端口暴露到公网；公网访问优先使用 Cloudflare Tunnel + Access
 
 ## 常见问题
 

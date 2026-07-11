@@ -1,13 +1,11 @@
 // ============================================================
 // session-manager.ts — Session 生命周期管理
-// shell 运行在 tmux 里（进程持久化），通过 pipe-pane 读输出，
-// 通过 load-buffer + paste-buffer 写输入。
-// 服务重启后可 reattach 已有 tmux session。
+// shell 运行在 tmux 里（进程持久化），通过 PTY 提供真实终端流。
+// 服务重启后可重新 attach 已有 tmux session。
 // ============================================================
 
-import { execFile, spawn } from "node:child_process"
-import { open, unlink } from "node:fs/promises"
-import { promisify } from "node:util"
+import * as pty from "@lydell/node-pty"
+import type { IDisposable, IPty } from "@lydell/node-pty"
 import { v4 as uuidv4 } from "uuid"
 import type WebSocket from "ws"
 import type { Config } from "../config.js"
@@ -15,17 +13,11 @@ import type { CreateSessionRequest, SessionInfo } from "../types.js"
 import { RingBuffer } from "./ring-buffer.js"
 import {
 	tmuxCapturePaneEscape,
-	tmuxCapturePaneText,
-	tmuxCreate,
 	tmuxGetCursorPosition,
 	tmuxGetSize,
 	tmuxKillSession,
 	tmuxListSessions,
-	tmuxPipePane,
-	tmuxResizeWindow,
 } from "./tmux.js"
-
-const execFileAsync = promisify(execFile)
 
 export interface ClientInfo {
 	cols: number
@@ -41,12 +33,11 @@ export interface Session {
 	cols: number
 	rows: number
 	createdAt: Date
-	/** 输出文件路径 */
-	outputPath: string
-	/** tail -f 进程 */
-	tailProcess: ReturnType<typeof spawn> | null
-	/** 写入队列，保证顺序 */
-	writeQueue: Promise<void>
+	state: "running" | "exited"
+	/** PTY running `tmux new-session -A -s ...` */
+	ptyProcess: IPty
+	dataSubscription: IDisposable
+	exitSubscription: IDisposable
 }
 
 export class SessionManager {
@@ -75,14 +66,11 @@ export class SessionManager {
 		const cols = this.config.defaultCols
 		const rows = this.config.defaultRows
 
-		// shell 运行在 tmux 里
-		await tmuxCreate(tmuxName, workspace, cols, rows)
-
-		const session = await this.attachToTmux(sessionId, req.name, tmuxName, cols, rows)
+		const session = this.attachPtyToTmux(sessionId, req.name, tmuxName, workspace, cols, rows)
 
 		// 如果指定了启动命令，发送它
 		if (req.command && req.command !== "bash" && req.command !== "zsh") {
-			await this.sendKeys(tmuxName, req.command)
+			this.write(session.sessionId, `${req.command}\r`)
 		}
 
 		console.log(
@@ -108,20 +96,16 @@ export class SessionManager {
 			const sessionId = uuidv4()
 			const name = `reattached_${ts.name}`
 			const size = await tmuxGetSize(ts.name)
+			const workspace = process.env.HOME ?? "/tmp"
 
-			const session = await this.attachToTmux(
+			this.attachPtyToTmux(
 				sessionId,
 				name,
 				ts.name,
+				workspace,
 				size.cols,
 				size.rows,
 			)
-
-			// 用 capture-pane 恢复可见屏幕内容到 buffer（纯文本，避免 escape 序列错乱）
-			const screen = await tmuxCapturePaneText(ts.name)
-			if (screen.length > 0) {
-				session.buffer.append(screen)
-			}
 
 			console.log(
 				`[session ${sessionId}] Reattached: tmux=${ts.name}`,
@@ -132,120 +116,63 @@ export class SessionManager {
 		return count
 	}
 
-	/** 连接到已有 tmux session，设置 pipe-pane + tail */
-	private async attachToTmux(
+	/** 连接到 tmux session，PTY 负责真实终端 I/O */
+	private attachPtyToTmux(
 		sessionId: string,
 		name: string,
 		tmuxName: string,
+		workspace: string,
 		cols: number,
 		rows: number,
-	): Promise<Session> {
-		const outputPath = `/tmp/webshell_${tmuxName}.out`
-
-		// 截断旧输出文件，避免 tail -f 读到上次残留数据
-		const fd = await open(outputPath, "w")
-		await fd.close()
-
+	): Session {
 		const buffer = new RingBuffer(this.config.maxBufferChunks)
+		const ptyProcess = pty.spawn(
+			"tmux",
+			["new-session", "-A", "-s", tmuxName, "-c", workspace],
+			{
+				name: "xterm-256color",
+				cols,
+				rows,
+				cwd: workspace,
+				env: buildPtyEnv(),
+			},
+		)
 
-		const session: Session = {
+		const session = {} as Session
+		Object.assign(session, {
 			sessionId,
 			name,
 			tmuxName,
 			buffer,
-			clients: new Map(),
+			clients: new Map<WebSocket, ClientInfo>(),
 			cols,
 			rows,
 			createdAt: new Date(),
-			outputPath,
-			tailProcess: null,
-			writeQueue: Promise.resolve(),
-		}
+			state: "running" as const,
+			ptyProcess,
+		})
 
-		// pipe-pane 将 tmux 输出写入文件
-		await tmuxPipePane(tmuxName, outputPath)
+		const dataSubscription = ptyProcess.onData((data) => {
+			const seq = session.buffer.append(data)
+			this.broadcast(session, { type: "output", data, seq })
+		})
 
-		// tail -f 实时读取输出
-		this.startOutputReader(session)
+		const exitSubscription = ptyProcess.onExit((event) => {
+			session.state = "exited"
+			this.broadcast(session, {
+				type: "closed",
+				reason: `PTY exited (${event.exitCode}${event.signal ? `, ${event.signal}` : ""})`,
+			})
+			console.log(`[session ${session.sessionId}] PTY exited: ${event.exitCode}`)
+		})
+
+		session.dataSubscription = dataSubscription
+		session.exitSubscription = exitSubscription
 
 		this.sessions.set(sessionId, session)
 		this.nameIndex.set(name, sessionId)
 
 		return session
-	}
-
-	/** 启动 tail -f 输出读取器 */
-	private startOutputReader(session: Session): void {
-		const tail = spawn("tail", ["-f", session.outputPath], {
-			stdio: ["ignore", "pipe", "ignore"],
-		})
-
-		// Screen-scraping approach: pipe-pane detects output activity,
-		// then we periodically capture-pane to get the fully rendered screen.
-		// This avoids forwarding raw escape sequences with cursor movements
-		// that xterm.js can't render atomically (no DEC mode 2026 support).
-		let activityDetected = false
-		let captureTimer: ReturnType<typeof setTimeout> | null = null
-		let lastScreen = ""
-		let unchangedFrames = 0
-		const INTERVAL_ACTIVE = 50
-		const INTERVAL_IDLE = 200
-		const IDLE_THRESHOLD = 3
-
-		const scheduleNext = (): void => {
-			const interval = unchangedFrames >= IDLE_THRESHOLD ? INTERVAL_IDLE : INTERVAL_ACTIVE
-			captureTimer = setTimeout(() => void captureAndBroadcast(), interval)
-		}
-
-		const captureAndBroadcast = async (): Promise<void> => {
-			if (!activityDetected) {
-				scheduleNext()
-				return
-			}
-			activityDetected = false
-			try {
-				const [screen, pos] = await Promise.all([
-					tmuxCapturePaneEscape(session.tmuxName),
-					tmuxGetCursorPosition(session.tmuxName),
-				])
-				if (screen === lastScreen) {
-					unchangedFrames++
-					scheduleNext()
-					return
-				}
-				unchangedFrames = 0
-				lastScreen = screen
-				// Overwrite from (1,1) without clearing — eliminates flicker.
-				// \x1b[H  = cursor home (1,1)
-				// \x1b[J  = erase from cursor to end of screen (clean up shorter frames)
-				const cursorSeq = `\x1b[${pos.y + 1};${pos.x + 1}H`
-				const data = "\x1b[H" + screen + "\x1b[J" + cursorSeq
-				const seq = session.buffer.append(data)
-				this.broadcast(session, { type: "output", data, seq })
-			} catch {
-				// tmux pane might be gone
-			}
-			scheduleNext()
-		}
-
-		tail.stdout!.on("data", () => {
-			activityDetected = true
-			// Wake up immediately from idle interval
-			if (unchangedFrames >= IDLE_THRESHOLD && captureTimer) {
-				clearTimeout(captureTimer)
-				unchangedFrames = 0
-				captureTimer = setTimeout(() => void captureAndBroadcast(), INTERVAL_ACTIVE)
-			}
-		})
-
-		scheduleNext()
-
-		tail.on("exit", () => {
-			if (captureTimer) clearTimeout(captureTimer)
-			console.log(`[session ${session.sessionId}] tail process exited`)
-		})
-
-		session.tailProcess = tail
 	}
 
 	/** 获取 session */
@@ -286,21 +213,10 @@ export class SessionManager {
 			ws.close()
 		}
 
-		// 停止 tail 进程
-		if (session.tailProcess) {
-			session.tailProcess.kill()
-			session.tailProcess = null
-		}
+		this.disposePty(session)
 
 		// 杀 tmux session
 		await tmuxKillSession(session.tmuxName)
-
-		// 清理输出文件
-		try {
-			await unlink(session.outputPath)
-		} catch {
-			// ignore
-		}
 
 		// 清理索引
 		this.nameIndex.delete(session.name)
@@ -310,55 +226,20 @@ export class SessionManager {
 		return true
 	}
 
-	/** 写入到 tmux session（load-buffer + paste-buffer，串行队列） */
+	/** 写入到 PTY */
 	write(sessionId: string, data: string, bracketed?: boolean): boolean {
 		const session = this.sessions.get(sessionId)
-		if (!session) return false
+		if (!session || session.state !== "running") return false
 
-		session.writeQueue = session.writeQueue
-			.then(() => this.doWrite(session.tmuxName, data, bracketed))
-			.catch((err: Error) => {
-				console.error(`[session ${sessionId}] Write failed:`, err.message)
-			})
-
+		const payload = bracketed ? `\x1b[200~${data}\x1b[201~` : data
+		session.ptyProcess.write(payload)
 		return true
 	}
 
-	/** 执行单次写入 */
-	private doWrite(tmuxName: string, data: string, bracketed?: boolean): Promise<void> {
-		return new Promise((resolve, reject) => {
-			const loadBuffer = spawn("tmux", ["load-buffer", "-"], {
-				stdio: ["pipe", "ignore", "pipe"],
-			})
-
-			let stderr = ""
-			loadBuffer.stderr!.on("data", (chunk: Buffer) => {
-				stderr += chunk.toString()
-			})
-
-			loadBuffer.stdin!.write(data)
-			loadBuffer.stdin!.end()
-
-			loadBuffer.on("close", (code) => {
-				if (code !== 0) {
-					reject(new Error(`load-buffer exited ${code}: ${stderr}`))
-					return
-				}
-				const pasteArgs = ["paste-buffer", "-t", tmuxName, "-d"]
-				if (bracketed) pasteArgs.push("-p")
-				execFileAsync("tmux", pasteArgs)
-					.then(() => resolve())
-					.catch(reject)
-			})
-
-			loadBuffer.on("error", reject)
-		})
-	}
-
-	/** 客户端报告尺寸，取所有客户端最小值 resize tmux */
+	/** 客户端报告尺寸，取所有客户端最小值 resize PTY */
 	resize(sessionId: string, cols: number, rows: number, ws?: WebSocket): boolean {
 		const session = this.sessions.get(sessionId)
-		if (!session) return false
+		if (!session || session.state !== "running") return false
 
 		// 更新该客户端自身的尺寸
 		if (ws) {
@@ -379,11 +260,11 @@ export class SessionManager {
 			}
 		}
 
-		// 只在尺寸真正变化时才 resize tmux
+		// 只在尺寸真正变化时才 resize PTY
 		if (minCols !== session.cols || minRows !== session.rows) {
 			session.cols = minCols
 			session.rows = minRows
-			tmuxResizeWindow(session.tmuxName, minCols, minRows).catch(() => {})
+			session.ptyProcess.resize(minCols, minRows)
 		}
 		return true
 	}
@@ -402,7 +283,7 @@ export class SessionManager {
 		if (session) {
 			session.clients.delete(ws)
 			// 剩余客户端重新计算最小尺寸
-			if (session.clients.size > 0) {
+			if (session.clients.size > 0 && session.state === "running") {
 				let minCols = Infinity
 				let minRows = Infinity
 				for (const [client, info] of session.clients) {
@@ -414,7 +295,7 @@ export class SessionManager {
 				if (minCols !== Infinity && (minCols !== session.cols || minRows !== session.rows)) {
 					session.cols = minCols
 					session.rows = minRows
-					tmuxResizeWindow(session.tmuxName, minCols, minRows).catch(() => {})
+					session.ptyProcess.resize(minCols, minRows)
 				}
 			}
 		}
@@ -428,20 +309,11 @@ export class SessionManager {
 			for (const [ws] of session.clients) {
 				ws.close()
 			}
-			// 停止 tail
-			if (session.tailProcess) {
-				session.tailProcess.kill()
-				session.tailProcess = null
-			}
-			// 不杀 tmux session — 留着给重启后 reattach
+			// 只杀当前 PTY attach 客户端，不杀 tmux session — 留着给重启后 reattach
+			this.disposePty(session)
 		}
 		this.sessions.clear()
 		this.nameIndex.clear()
-	}
-
-	/** 通过 send-keys 发送命令（用于初始命令） */
-	private async sendKeys(tmuxName: string, command: string): Promise<void> {
-		await execFileAsync("tmux", ["send-keys", "-t", tmuxName, command, "Enter"])
 	}
 
 	/** 广播消息给 session 的所有客户端 */
@@ -454,15 +326,42 @@ export class SessionManager {
 		}
 	}
 
+	private disposePty(session: Session): void {
+		try {
+			session.dataSubscription.dispose()
+		} catch {
+			// ignore
+		}
+		try {
+			session.exitSubscription.dispose()
+		} catch {
+			// ignore
+		}
+		try {
+			session.ptyProcess.kill()
+		} catch {
+			// ignore
+		}
+	}
+
 	private toInfo(session: Session): SessionInfo {
 		return {
 			sessionId: session.sessionId,
 			name: session.name,
-			state: "running",
+			state: session.state,
 			connectedClients: session.clients.size,
 			cols: session.cols,
 			rows: session.rows,
 			createdAt: session.createdAt.toISOString(),
 		}
 	}
+}
+
+function buildPtyEnv(): Record<string, string> {
+	const env: Record<string, string> = {}
+	for (const [key, value] of Object.entries(process.env)) {
+		if (value !== undefined) env[key] = value
+	}
+	env.TERM = "xterm-256color"
+	return env
 }

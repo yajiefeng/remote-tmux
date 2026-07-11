@@ -13,37 +13,6 @@ export interface TmuxSessionInfo {
 	created: string
 }
 
-/** 创建 tmux session（detached） */
-export async function tmuxCreate(
-	name: string,
-	cwd: string,
-	cols: number,
-	rows: number,
-): Promise<void> {
-	await exec("tmux", [
-		"new-session",
-		"-d",
-		"-s",
-		name,
-		"-c",
-		cwd,
-		"-x",
-		String(cols),
-		"-y",
-		String(rows),
-	])
-}
-
-/** 检查 tmux session 是否存在 */
-export async function tmuxHasSession(name: string): Promise<boolean> {
-	try {
-		await exec("tmux", ["has-session", "-t", name])
-		return true
-	} catch {
-		return false
-	}
-}
-
 /** 列出所有 tmux session */
 export async function tmuxListSessions(): Promise<TmuxSessionInfo[]> {
 	try {
@@ -79,29 +48,6 @@ export async function tmuxKillSession(name: string): Promise<void> {
 	}
 }
 
-/** 抓取 pane 纯文本内容（用于重连恢复，不带 escape 序列避免渲染错乱） */
-export async function tmuxCapturePaneText(name: string): Promise<string> {
-	try {
-		const { stdout } = await exec("tmux", [
-			"capture-pane",
-			"-pt",
-			`${name}:0.0`,
-			"-S",
-			"-",
-		])
-		// 去掉尾部空行
-		const lines = stdout.split("\n")
-		while (lines.length > 0 && lines[lines.length - 1]!.trim() === "") {
-			lines.pop()
-		}
-		if (lines.length === 0) return ""
-		// 用 \r\n 让 xterm.js 正确换行定位
-		return lines.join("\r\n") + "\r\n"
-	} catch {
-		return ""
-	}
-}
-
 /** 抓取当前屏幕快照（带 escape 序列 + scrollback，用于 session 切换时快速恢复画面） */
 export async function tmuxCapturePaneEscape(name: string, scrollbackLines: number = 500): Promise<string> {
 	try {
@@ -126,41 +72,6 @@ export async function tmuxCapturePaneEscape(name: string, scrollbackLines: numbe
 		return lines.join("\r\n")
 	} catch {
 		return ""
-	}
-}
-
-/** 启用 pipe-pane，将输出写入文件 */
-export async function tmuxPipePane(name: string, outputPath: string): Promise<void> {
-	// 先关闭已有的 pipe-pane（如果有的话，比如 reattach 场景）
-	try {
-		await exec("tmux", ["pipe-pane", "-t", name])
-	} catch {
-		// ignore
-	}
-	// 设置新的 pipe-pane
-	await exec("tmux", [
-		"pipe-pane",
-		"-t",
-		name,
-		"-o",
-		`cat >> ${outputPath}`,
-	])
-}
-
-/** 调整 tmux 窗口大小 */
-export async function tmuxResizeWindow(name: string, cols: number, rows: number): Promise<void> {
-	try {
-		await exec("tmux", [
-			"resize-window",
-			"-t",
-			name,
-			"-x",
-			String(cols),
-			"-y",
-			String(rows),
-		])
-	} catch {
-		// ignore - window might not exist
 	}
 }
 

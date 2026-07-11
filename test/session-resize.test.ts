@@ -1,58 +1,69 @@
-import { describe, expect, it, vi, beforeEach } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 
-// Mock tmux module — must be before importing session-manager
-vi.mock("../src/core/tmux.js", () => ({
-	tmuxCreate: vi.fn().mockResolvedValue(undefined),
-	tmuxPipePane: vi.fn().mockResolvedValue(undefined),
-	tmuxResizeWindow: vi.fn().mockResolvedValue(undefined),
-	tmuxKillSession: vi.fn().mockResolvedValue(undefined),
-	tmuxCapturePaneText: vi.fn().mockResolvedValue(""),
-	tmuxListSessions: vi.fn().mockResolvedValue([]),
-	tmuxGetSize: vi.fn().mockResolvedValue({ cols: 80, rows: 24 }),
+const { spawnedPtys, spawnPty } = vi.hoisted(() => {
+	class FakePty {
+		pid = 1234
+		cols = 120
+		rows = 36
+		process = "tmux"
+		handleFlowControl = false
+		writes: Array<string | Buffer> = []
+		resizes: Array<{ cols: number; rows: number }> = []
+		private dataHandlers: Array<(data: string) => void> = []
+		private exitHandlers: Array<(event: { exitCode: number; signal?: number }) => void> = []
+
+		onData = (handler: (data: string) => void) => {
+			this.dataHandlers.push(handler)
+			return { dispose: vi.fn() }
+		}
+
+		onExit = (handler: (event: { exitCode: number; signal?: number }) => void) => {
+			this.exitHandlers.push(handler)
+			return { dispose: vi.fn() }
+		}
+
+		write(data: string | Buffer): void { this.writes.push(data) }
+		resize(cols: number, rows: number): void {
+			this.cols = cols
+			this.rows = rows
+			this.resizes.push({ cols, rows })
+		}
+		clear(): void {}
+		pause(): void {}
+		resume(): void {}
+		kill(): void {}
+	}
+
+	const spawnedPtys: FakePty[] = []
+	const spawnPty = vi.fn((_file: string, _args: string[], options: { cols?: number; rows?: number }) => {
+		const fake = new FakePty()
+		fake.cols = options.cols ?? fake.cols
+		fake.rows = options.rows ?? fake.rows
+		spawnedPtys.push(fake)
+		return fake
+	})
+	return { spawnedPtys, spawnPty }
+})
+
+vi.mock("@lydell/node-pty", () => ({
+	spawn: spawnPty,
 }))
 
-// Mock fs/promises open — attachToTmux truncates the output file
-vi.mock("node:fs/promises", async () => {
-	const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises")
-	return {
-		...actual,
-		open: vi.fn().mockResolvedValue({ close: vi.fn().mockResolvedValue(undefined) }),
-		unlink: vi.fn().mockResolvedValue(undefined),
-	}
-})
-
-// Mock child_process spawn (tail -f)
-vi.mock("node:child_process", async () => {
-	const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process")
-	const EventEmitter = (await import("node:events")).EventEmitter
-	const { Readable } = await import("node:stream")
-	return {
-		...actual,
-		spawn: vi.fn().mockImplementation(() => {
-			const proc = new EventEmitter() as ReturnType<typeof import("node:child_process").spawn>
-			;(proc as any).stdout = new Readable({ read() {} })
-			;(proc as any).stderr = new Readable({ read() {} })
-			;(proc as any).stdin = { write: vi.fn(), end: vi.fn() }
-			;(proc as any).kill = vi.fn()
-			;(proc as any).pid = 12345
-			return proc
-		}),
-		execFile: vi.fn().mockImplementation((_cmd: string, _args: string[], cb: Function) => {
-			cb(null, "", "")
-		}),
-	}
-})
+vi.mock("../src/core/tmux.js", () => ({
+	tmuxCapturePaneEscape: vi.fn().mockResolvedValue(""),
+	tmuxGetCursorPosition: vi.fn().mockResolvedValue({ x: 0, y: 0 }),
+	tmuxGetSize: vi.fn().mockResolvedValue({ cols: 80, rows: 24 }),
+	tmuxKillSession: vi.fn().mockResolvedValue(undefined),
+	tmuxListSessions: vi.fn().mockResolvedValue([]),
+}))
 
 import { SessionManager } from "../src/core/session-manager.js"
-import { tmuxResizeWindow } from "../src/core/tmux.js"
 import type { Config } from "../src/config.js"
-
-const mockResize = tmuxResizeWindow as ReturnType<typeof vi.fn>
 
 function makeConfig(overrides?: Partial<Config>): Config {
 	return {
 		port: 3000,
-		host: "0.0.0.0",
+		host: "127.0.0.1",
 		token: "test",
 		maxBufferChunks: 100,
 		defaultCols: 120,
@@ -66,7 +77,6 @@ function makeConfig(overrides?: Partial<Config>): Config {
 	}
 }
 
-/** Minimal WebSocket mock with readyState */
 function mockWs(readyState = 1): any {
 	return {
 		readyState,
@@ -81,6 +91,7 @@ describe("SessionManager resize (smallest-wins)", () => {
 
 	beforeEach(async () => {
 		vi.clearAllMocks()
+		spawnedPtys.length = 0
 		manager = new SessionManager(makeConfig())
 		const info = await manager.create({ name: "test-resize" })
 		sessionId = info.sessionId
@@ -102,9 +113,7 @@ describe("SessionManager resize (smallest-wins)", () => {
 		manager.addClient(sessionId, ws1, 120, 40)
 		manager.addClient(sessionId, ws2, 80, 24)
 
-		// ws1 resizes to 120x40
 		manager.resize(sessionId, 120, 40, ws1)
-		// ws2 resizes to 80x24
 		manager.resize(sessionId, 80, 24, ws2)
 
 		const session = manager.get(sessionId)!
@@ -126,29 +135,24 @@ describe("SessionManager resize (smallest-wins)", () => {
 		expect(session.rows).toBe(24)
 	})
 
-	it("does not call tmuxResizeWindow when size unchanged", () => {
+	it("does not resize PTY when size is unchanged", () => {
 		const ws1 = mockWs()
 		manager.addClient(sessionId, ws1, 120, 36)
 
-		mockResize.mockClear()
-		// 120x36 is the default — no change expected
+		spawnedPtys[0]!.resizes = []
 		manager.resize(sessionId, 120, 36, ws1)
 
-		expect(mockResize).not.toHaveBeenCalled()
+		expect(spawnedPtys[0]!.resizes).toEqual([])
 	})
 
-	it("calls tmuxResizeWindow when size changes", () => {
+	it("resizes PTY when size changes", () => {
 		const ws1 = mockWs()
 		manager.addClient(sessionId, ws1, 120, 36)
 
-		mockResize.mockClear()
+		spawnedPtys[0]!.resizes = []
 		manager.resize(sessionId, 80, 24, ws1)
 
-		expect(mockResize).toHaveBeenCalledWith(
-			expect.stringContaining("ses_"),
-			80,
-			24,
-		)
+		expect(spawnedPtys[0]!.resizes).toEqual([{ cols: 80, rows: 24 }])
 	})
 
 	it("recalculates size when a client disconnects", () => {
@@ -164,17 +168,12 @@ describe("SessionManager resize (smallest-wins)", () => {
 		expect(session.cols).toBe(80)
 		expect(session.rows).toBe(24)
 
-		// Remove the smaller client
-		mockResize.mockClear()
+		spawnedPtys[0]!.resizes = []
 		manager.removeClient(sessionId, ws1)
 
 		expect(session.cols).toBe(120)
 		expect(session.rows).toBe(40)
-		expect(mockResize).toHaveBeenCalledWith(
-			expect.stringContaining("ses_"),
-			120,
-			40,
-		)
+		expect(spawnedPtys[0]!.resizes).toEqual([{ cols: 120, rows: 40 }])
 	})
 
 	it("does not resize when last client disconnects", () => {
@@ -182,23 +181,21 @@ describe("SessionManager resize (smallest-wins)", () => {
 		manager.addClient(sessionId, ws1, 80, 24)
 		manager.resize(sessionId, 80, 24, ws1)
 
-		mockResize.mockClear()
+		spawnedPtys[0]!.resizes = []
 		manager.removeClient(sessionId, ws1)
 
-		// No clients left — should not attempt resize
-		expect(mockResize).not.toHaveBeenCalled()
+		expect(spawnedPtys[0]!.resizes).toEqual([])
 	})
 
 	it("ignores closed WebSocket connections in min calculation", () => {
-		const ws1 = mockWs(1)  // OPEN
-		const ws2 = mockWs(3)  // CLOSED
+		const ws1 = mockWs(1)
+		const ws2 = mockWs(3)
 		manager.addClient(sessionId, ws1, 120, 40)
 		manager.addClient(sessionId, ws2, 40, 10)
 
 		manager.resize(sessionId, 120, 40, ws1)
 
 		const session = manager.get(sessionId)!
-		// ws2 is closed, should be ignored — session uses ws1's size
 		expect(session.cols).toBe(120)
 		expect(session.rows).toBe(40)
 	})

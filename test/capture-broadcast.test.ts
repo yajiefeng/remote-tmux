@@ -1,59 +1,58 @@
 // ============================================================
-// capture-broadcast.test.ts — 保护 captureAndBroadcast + snapshot 的正确行为
+// capture-broadcast.test.ts — snapshot correctness for tmux-backed PTY sessions
 // ============================================================
 
-import { describe, expect, it, vi, beforeEach } from "vitest"
-import { EventEmitter } from "node:events"
-import { Readable } from "node:stream"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 
-// --- Mocks ---
+const { spawnedPtys, spawnPty } = vi.hoisted(() => {
+	class FakePty {
+		pid = 1234
+		cols = 120
+		rows = 36
+		process = "tmux"
+		handleFlowControl = false
+		private dataHandlers: Array<(data: string) => void> = []
+		onData = (handler: (data: string) => void) => {
+			this.dataHandlers.push(handler)
+			return { dispose: vi.fn() }
+		}
+		onExit = (_handler: (event: { exitCode: number; signal?: number }) => void) => ({ dispose: vi.fn() })
+		write(): void {}
+		resize(): void {}
+		clear(): void {}
+		pause(): void {}
+		resume(): void {}
+		kill(): void {}
+		emitData(data: string): void {
+			for (const handler of this.dataHandlers) handler(data)
+		}
+	}
+
+	const spawnedPtys: FakePty[] = []
+	const spawnPty = vi.fn((_file: string, _args: string[], options: { cols?: number; rows?: number }) => {
+		const fake = new FakePty()
+		fake.cols = options.cols ?? fake.cols
+		fake.rows = options.rows ?? fake.rows
+		spawnedPtys.push(fake)
+		return fake
+	})
+	return { spawnedPtys, spawnPty }
+})
 
 const mockCapturePaneEscape = vi.fn().mockResolvedValue("")
 const mockGetCursorPosition = vi.fn().mockResolvedValue({ x: 0, y: 0 })
 
-vi.mock("../src/core/tmux.js", () => ({
-	tmuxCreate: vi.fn().mockResolvedValue(undefined),
-	tmuxPipePane: vi.fn().mockResolvedValue(undefined),
-	tmuxResizeWindow: vi.fn().mockResolvedValue(undefined),
-	tmuxKillSession: vi.fn().mockResolvedValue(undefined),
-	tmuxCapturePaneText: vi.fn().mockResolvedValue(""),
-	tmuxCapturePaneEscape: (...args: any[]) => mockCapturePaneEscape(...args),
-	tmuxGetCursorPosition: (...args: any[]) => mockGetCursorPosition(...args),
-	tmuxListSessions: vi.fn().mockResolvedValue([]),
-	tmuxGetSize: vi.fn().mockResolvedValue({ cols: 80, rows: 24 }),
+vi.mock("@lydell/node-pty", () => ({
+	spawn: spawnPty,
 }))
 
-vi.mock("node:fs/promises", async () => {
-	const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises")
-	return {
-		...actual,
-		open: vi.fn().mockResolvedValue({ close: vi.fn().mockResolvedValue(undefined) }),
-		unlink: vi.fn().mockResolvedValue(undefined),
-	}
-})
-
-// Capture the spawned tail process so tests can trigger stdout events
-let lastSpawnedProc: EventEmitter & { stdout: Readable }
-
-vi.mock("node:child_process", async () => {
-	const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process")
-	return {
-		...actual,
-		spawn: vi.fn().mockImplementation(() => {
-			const proc = new EventEmitter() as any
-			proc.stdout = new Readable({ read() {} })
-			proc.stderr = new Readable({ read() {} })
-			proc.stdin = { write: vi.fn(), end: vi.fn() }
-			proc.kill = vi.fn()
-			proc.pid = 12345
-			lastSpawnedProc = proc
-			return proc
-		}),
-		execFile: vi.fn().mockImplementation((_cmd: string, _args: string[], cb: Function) => {
-			cb(null, "", "")
-		}),
-	}
-})
+vi.mock("../src/core/tmux.js", () => ({
+	tmuxCapturePaneEscape: (...args: any[]) => mockCapturePaneEscape(...args),
+	tmuxGetCursorPosition: (...args: any[]) => mockGetCursorPosition(...args),
+	tmuxGetSize: vi.fn().mockResolvedValue({ cols: 80, rows: 24 }),
+	tmuxKillSession: vi.fn().mockResolvedValue(undefined),
+	tmuxListSessions: vi.fn().mockResolvedValue([]),
+}))
 
 import { SessionManager } from "../src/core/session-manager.js"
 import type { Config } from "../src/config.js"
@@ -61,7 +60,7 @@ import type { Config } from "../src/config.js"
 function makeConfig(overrides?: Partial<Config>): Config {
 	return {
 		port: 3000,
-		host: "0.0.0.0",
+		host: "127.0.0.1",
 		token: "test",
 		maxBufferChunks: 100,
 		defaultCols: 120,
@@ -75,144 +74,13 @@ function makeConfig(overrides?: Partial<Config>): Config {
 	}
 }
 
-function mockWs(readyState = 1): any {
-	return { readyState, send: vi.fn(), close: vi.fn() }
-}
-
-/** Trigger a capture cycle: emit stdout data + wait for the interval timer */
-async function triggerCapture(): Promise<void> {
-	// Emit data on tail stdout to set activityDetected = true
-	lastSpawnedProc.stdout.push("x")
-	// Let the setInterval callback run
-	await vi.advanceTimersByTimeAsync(60)
-}
-
-// ============================================================
-
-describe("captureAndBroadcast", () => {
-	let manager: SessionManager
-	let sessionId: string
-	let ws: any
-
-	beforeEach(async () => {
-		vi.useFakeTimers()
-		vi.clearAllMocks()
-		mockCapturePaneEscape.mockResolvedValue("")
-		mockGetCursorPosition.mockResolvedValue({ x: 0, y: 0 })
-
-		manager = new SessionManager(makeConfig())
-		const info = await manager.create({ name: "test-capture" })
-		sessionId = info.sessionId
-		ws = mockWs()
-		manager.addClient(sessionId, ws, 80, 24)
-	})
-
-	it("sends \\x1b[2J\\x1b[H + screen + cursor on each frame", async () => {
-		const screen = "line1\r\nline2\r\nline3"
-		mockCapturePaneEscape.mockResolvedValue(screen)
-		mockGetCursorPosition.mockResolvedValue({ x: 5, y: 2 })
-
-		await triggerCapture()
-
-		expect(ws.send).toHaveBeenCalledTimes(1)
-		const msg = JSON.parse(ws.send.mock.calls[0][0])
-		expect(msg.type).toBe("output")
-		// Must start with clear screen + home
-		expect(msg.data).toMatch(/^\x1b\[H/)
-		// Must NOT contain clear-screen (causes flicker)
-		expect(msg.data).not.toContain("\x1b[2J")
-		// Must contain the screen content
-		expect(msg.data).toContain(screen)
-		// Must have erase-to-end after screen, then cursor position
-		expect(msg.data).toMatch(/line3\x1b\[J\x1b\[3;6H$/)
-	})
-
-	it("does not broadcast when screen is unchanged", async () => {
-		const screen = "same content"
-		mockCapturePaneEscape.mockResolvedValue(screen)
-
-		await triggerCapture()
-		expect(ws.send).toHaveBeenCalledTimes(1)
-
-		ws.send.mockClear()
-		await triggerCapture()
-		expect(ws.send).not.toHaveBeenCalled()
-	})
-
-	it("broadcasts again when screen changes", async () => {
-		mockCapturePaneEscape.mockResolvedValue("frame1")
-		await triggerCapture()
-
-		ws.send.mockClear()
-		mockCapturePaneEscape.mockResolvedValue("frame2")
-		await triggerCapture()
-
-		expect(ws.send).toHaveBeenCalledTimes(1)
-		const msg = JSON.parse(ws.send.mock.calls[0][0])
-		expect(msg.data).toContain("frame2")
-	})
-
-	it("does not broadcast without activity (no stdout data)", async () => {
-		mockCapturePaneEscape.mockResolvedValue("some screen")
-		// Only advance timer without triggering stdout
-		await vi.advanceTimersByTimeAsync(60)
-
-		expect(ws.send).not.toHaveBeenCalled()
-	})
-
-	it("uses default scrollbackLines (500) for capture", async () => {
-		mockCapturePaneEscape.mockResolvedValue("test")
-		await triggerCapture()
-
-		// tmuxCapturePaneEscape should be called with session name only (default 500)
-		expect(mockCapturePaneEscape).toHaveBeenCalledWith(
-			expect.stringContaining("ses_"),
-		)
-		// Verify no explicit 0 is passed — default parameter = 500
-		const callArgs = mockCapturePaneEscape.mock.calls[0]
-		expect(callArgs).toHaveLength(1)
-	})
-
-	it("appends output to RingBuffer with incrementing seq", async () => {
-		mockCapturePaneEscape.mockResolvedValue("frame1")
-		await triggerCapture()
-
-		mockCapturePaneEscape.mockResolvedValue("frame2")
-		await triggerCapture()
-
-		const session = manager.get(sessionId)!
-		expect(session.buffer.getCurrentSeq()).toBe(2)
-		const chunks = session.buffer.getLatest(10)
-		expect(chunks).toHaveLength(2)
-		expect(chunks[0].seq).toBe(1)
-		expect(chunks[1].seq).toBe(2)
-	})
-
-	it("only sends to open WebSocket connections", async () => {
-		const wsOpen = mockWs(1)
-		const wsClosed = mockWs(3)
-		manager.addClient(sessionId, wsOpen, 80, 24)
-		manager.addClient(sessionId, wsClosed, 80, 24)
-
-		mockCapturePaneEscape.mockResolvedValue("test")
-		await triggerCapture()
-
-		// ws (from beforeEach) + wsOpen should receive, wsClosed should not
-		expect(ws.send).toHaveBeenCalled()
-		expect(wsOpen.send).toHaveBeenCalled()
-		expect(wsClosed.send).not.toHaveBeenCalled()
-	})
-})
-
-// ============================================================
-
 describe("snapshot", () => {
 	let manager: SessionManager
 	let sessionId: string
 
 	beforeEach(async () => {
-		vi.useRealTimers()
 		vi.clearAllMocks()
+		spawnedPtys.length = 0
 		mockCapturePaneEscape.mockResolvedValue("")
 		mockGetCursorPosition.mockResolvedValue({ x: 0, y: 0 })
 
@@ -233,11 +101,11 @@ describe("snapshot", () => {
 		expect(snap!.cursorY).toBe(1)
 	})
 
-	it("uses default scrollbackLines (500) for snapshot", async () => {
+	it("uses default scrollbackLines for snapshot", async () => {
 		mockCapturePaneEscape.mockResolvedValue("snap")
+
 		await manager.snapshot(sessionId)
 
-		// Should be called with just the session name (default 500)
 		expect(mockCapturePaneEscape).toHaveBeenCalledWith(
 			expect.stringContaining("ses_"),
 		)
@@ -247,18 +115,16 @@ describe("snapshot", () => {
 
 	it("returns current buffer seq", async () => {
 		mockCapturePaneEscape.mockResolvedValue("snap")
-
-		// Manually append to buffer to set seq
-		const session = manager.get(sessionId)!
-		session.buffer.append("chunk1")
-		session.buffer.append("chunk2")
+		spawnedPtys[0]!.emitData("chunk1")
+		spawnedPtys[0]!.emitData("chunk2")
 
 		const snap = await manager.snapshot(sessionId)
+
 		expect(snap!.cursor).toBe(2)
 	})
 
 	it("returns null for unknown session", async () => {
-		const snap = await manager.snapshot("nonexistent")
+		const snap = await manager.snapshot("missing")
 		expect(snap).toBeNull()
 	})
 })

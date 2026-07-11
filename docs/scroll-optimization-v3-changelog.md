@@ -1,3 +1,5 @@
+> **Legacy note:** This document describes the pre-PTY screen-capture transport. Current realtime I/O uses PTY + tmux; see `docs/architecture-capture-output.md`.
+
 # Scroll Optimization v3 — 实施记录
 
 > 分支: `feat/scroll-optimization-v3`

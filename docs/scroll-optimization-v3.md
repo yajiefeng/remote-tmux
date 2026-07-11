@@ -1,3 +1,5 @@
+> **Legacy note:** This document describes the pre-PTY screen-capture transport. Current realtime I/O uses PTY + tmux; see `docs/architecture-capture-output.md`.
+
 # 滚动优化方案 v3
 
 > 基于 v2 方案 + free-code-main（Claude Code CLI）TUI 渲染引擎的深度分析重写。

@@ -5,7 +5,7 @@
 export interface Config {
 	/** HTTP/WS 监听端口 */
 	port: number
-	/** 监听地址，0.0.0.0 允许外部访问 */
+	/** 监听地址，默认只绑定本机；外部访问请显式配置 Tunnel/反代 */
 	host: string
 	/** 静态鉴权 token（P0） */
 	token: string
@@ -38,7 +38,7 @@ export function loadConfig(): Config {
 
 	return {
 		port: parseInt(process.env.WEBSHELL_PORT ?? "3000", 10),
-		host: process.env.WEBSHELL_HOST ?? "0.0.0.0",
+		host: process.env.WEBSHELL_HOST ?? "127.0.0.1",
 		token,
 		defaultCols: parseInt(process.env.WEBSHELL_COLS ?? "120", 10),
 		defaultRows: parseInt(process.env.WEBSHELL_ROWS ?? "36", 10),

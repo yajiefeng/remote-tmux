@@ -11,7 +11,7 @@ Control Mac terminal sessions from your phone browser. Shell runs inside tmux �
 ## Features
 
 - **tmux Persistence** — Shell processes run inside tmux. Server restarts auto-reattach existing sessions without losing terminal content
-- **Real-time Terminal** — xterm.js frontend + WebSocket for bidirectional I/O with color, cursor, and CJK wide character support
+- **Real-time Terminal** — xterm.js frontend + WebSocket + PTY transport for bidirectional I/O with color, cursor, and CJK wide character support
 - **Disconnect Recovery** — Auto-reconnect with countdown, RingBuffer history replay, seq-based deduplication for consistent state
 - **Multi-session** — Create, switch, and delete multiple terminal sessions from the browser
 - **Mobile Optimized** — Soft keyboard adaptation, landscape mode maximization, shortcut bar (Tab / Ctrl-C / Ctrl-D / ↑ / ↓ / Esc / Paste)
@@ -66,7 +66,7 @@ npx tsx src/cli.ts
 |----------|---------|-------------|
 | `WEBSHELL_TOKEN` | (required) | Auth token |
 | `WEBSHELL_PORT` | `3000` | Listen port |
-| `WEBSHELL_HOST` | `0.0.0.0` | Listen address |
+| `WEBSHELL_HOST` | `127.0.0.1` | Listen address. Keep localhost for Tunnel/Access deployments; set explicitly for LAN use. |
 | `WEBSHELL_COLS` | `120` | Default terminal columns |
 | `WEBSHELL_ROWS` | `36` | Default terminal rows |
 | `WEBSHELL_BUFFER_SIZE` | `50000` | RingBuffer max chunks |
@@ -79,9 +79,11 @@ npx tsx src/cli.ts
 
 ## Mobile Access
 
-On the same WiFi, use Mac's local IP:
+On the same WiFi, explicitly bind to LAN first:
 
 ```bash
+WEBSHELL_HOST=0.0.0.0 WEBSHELL_TOKEN=your_secret_token npx tsx src/cli.ts
+
 # Get local IP
 ipconfig getifaddr en0
 
@@ -98,14 +100,14 @@ Phone Browser (xterm.js)
     │ HTTP / WebSocket
     ▼
 API Server (Node.js)
-    │ pipe-pane (output) / load-buffer (input)
+    │ PTY adapter (`@lydell/node-pty`) running `tmux new-session -A`
     ▼
 tmux session (shell persistence)
 ```
 
-- **Output**: shell → tmux pipe-pane → file → tail -f → RingBuffer → WS broadcast
-- **Input**: WS → tmux load-buffer + paste-buffer (serial queue for ordering)
-- **Reconnect**: tmux capture-pane plain text snapshot + RingBuffer history replay
+- **Output**: shell → tmux → PTY → RingBuffer → WS broadcast
+- **Input**: WS → PTY write → tmux → shell
+- **Reconnect**: server restarts attach to existing `ses_*` tmux sessions; session switches use `tmux capture-pane` snapshots plus RingBuffer replay
 
 ## Project Structure
 
@@ -116,7 +118,7 @@ src/
 ├── config.ts               # Env-based configuration
 ├── types.ts                # Shared types
 ├── core/
-│   ├── session-manager.ts  # Session lifecycle, tmux + pipe-pane I/O
+│   ├── session-manager.ts  # Session lifecycle, PTY + tmux I/O
 │   ├── ring-buffer.ts      # Output history ring buffer
 │   ├── tmux.ts             # tmux command wrappers
 │   └── idle-monitor.ts     # Idle timeout monitor

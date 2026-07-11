@@ -1,3 +1,5 @@
+> **Legacy note:** This document describes the pre-PTY screen-capture transport. Current realtime I/O uses PTY + tmux; see `docs/architecture-capture-output.md`.
+
 # 滚动优化方案 v2
 
 > 基于 `docs/architecture-capture-output.md` 和 v1 方案的实际踩坑经验重写。

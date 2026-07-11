@@ -1,3 +1,5 @@
+> **Legacy note:** This document describes the pre-PTY screen-capture transport. Current realtime I/O uses PTY + tmux; see `docs/architecture-capture-output.md`.
+
 # P0 理论评估：`\x1b[H` 替代 `\x1b[2J\x1b[H`
 
 ## 关键参数

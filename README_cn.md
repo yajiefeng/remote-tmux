@@ -11,7 +11,7 @@
 ## 特点
 
 - **tmux 持久化** — shell 进程跑在 tmux 里，server 重启后自动 reattach，终端内容不丢失
-- **实时终端** — xterm.js 前端 + WebSocket 双向通信，支持颜色、光标、CJK 宽字符
+- **实时终端** — xterm.js 前端 + WebSocket + PTY 传输，支持颜色、光标、CJK 宽字符
 - **断线补偿** — 断线自动重连带倒计时，RingBuffer 历史回放，seq 去重保证一致性
 - **多 session** — 支持创建/切换/删除多个终端会话
 - **移动端适配** — 软键盘自适应、横屏最大化、快捷键栏（Tab/Ctrl-C/Ctrl-D/↑/↓/Esc/Paste）
@@ -66,7 +66,7 @@ npx tsx src/cli.ts
 |------|--------|------|
 | `WEBSHELL_TOKEN` | （必填） | 认证 token |
 | `WEBSHELL_PORT` | `3000` | 监听端口 |
-| `WEBSHELL_HOST` | `0.0.0.0` | 监听地址 |
+| `WEBSHELL_HOST` | `127.0.0.1` | 监听地址。Tunnel/Access 部署建议保持 localhost；局域网访问需显式设置。 |
 | `WEBSHELL_COLS` | `120` | 默认终端列数 |
 | `WEBSHELL_ROWS` | `36` | 默认终端行数 |
 | `WEBSHELL_BUFFER_SIZE` | `50000` | RingBuffer 最大 chunk 数 |
@@ -79,9 +79,11 @@ npx tsx src/cli.ts
 
 ## 手机访问
 
-同一 WiFi 下直接用 Mac 局域网 IP：
+同一 WiFi 下访问时，先显式绑定到局域网：
 
 ```bash
+WEBSHELL_HOST=0.0.0.0 WEBSHELL_TOKEN=your_secret_token npx tsx src/cli.ts
+
 # 查看 IP
 ipconfig getifaddr en0
 
@@ -98,14 +100,14 @@ ipconfig getifaddr en0
     │ HTTP / WebSocket
     ▼
 API Server (Node.js)
-    │ pipe-pane (输出) / load-buffer (输入)
+    │ PTY 适配器（`@lydell/node-pty`）运行 `tmux new-session -A`
     ▼
 tmux session (shell 持久化)
 ```
 
-- **输出路径**：shell → tmux pipe-pane → 文件 → tail -f → RingBuffer → WS 广播
-- **输入路径**：WS → tmux load-buffer + paste-buffer（串行队列保序）
-- **重连恢复**：tmux capture-pane 纯文本快照 + RingBuffer 历史回放
+- **输出路径**：shell → tmux → PTY → RingBuffer → WS 广播
+- **输入路径**：WS → PTY write → tmux → shell
+- **重连恢复**：server 重启后重新 attach 已有 `ses_*` tmux sessions；切换 session 时用 `tmux capture-pane` 快照 + RingBuffer 回放
 
 ## 项目结构
 
@@ -116,7 +118,7 @@ src/
 ├── config.ts               # 环境变量配置
 ├── types.ts                # 共享类型
 ├── core/
-│   ├── session-manager.ts  # session 生命周期，tmux + pipe-pane I/O
+│   ├── session-manager.ts  # session 生命周期，PTY + tmux I/O
 │   ├── ring-buffer.ts      # 输出历史环形缓冲
 │   ├── tmux.ts             # tmux 命令封装
 │   └── idle-monitor.ts     # 空闲超时监控
